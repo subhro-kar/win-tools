@@ -95,6 +95,7 @@ function switchTab(tabId) {
     if (tabId === "categories") loadCategories();
     if (tabId === "export") loadExport();
     if (tabId === "sync") loadSync();
+    if (tabId === "tweaks") loadTweaks();
 }
 
 // ── Toast Notifications ─────────────────────────────────────────
@@ -1474,6 +1475,254 @@ async function applyRestore() {
     }
     btn.disabled = false;
     btn.textContent = "Restore Selected Items";
+}
+
+// ── Tweaks (Windows Settings) ────────────────────────────────────────
+
+let tweaksData = null;
+
+async function loadTweaks() {
+    const el = document.getElementById("tweaks-content");
+    const resultEl = document.getElementById("tweaks-result");
+    resultEl.textContent = "";
+    showLoading(el, "Scanning Windows settings...");
+
+    try {
+        const res = await fetch(`${API}/tweaks`);
+        tweaksData = await res.json();
+        renderTweaks(tweaksData);
+    } catch (err) {
+        el.textContent = "";
+        el.appendChild(createElement("div", { className: "loading" }, [`Error: ${err.message}`]));
+    }
+}
+
+function renderTweaks(data) {
+    const el = document.getElementById("tweaks-content");
+    el.textContent = "";
+
+    const categoryIcons = {
+        "Personalization": "🎨",
+        "Privacy & Telemetry": "🔒",
+        "Performance & Power": "⚡",
+        "Security & Updates": "🛡️",
+    };
+
+    for (const [catName, catData] of Object.entries(data)) {
+        const section = createElement("div", { className: "tweak-category" });
+
+        // Category header with select all checkbox
+        const header = createElement("div", { className: "tweak-category-header" });
+        const icon = categoryIcons[catName] || catData.icon || "⚙";
+        const catCheck = createElement("input", { type: "checkbox", id: `cat-${catName}`, className: "tweak-cat-checkbox" });
+        catCheck.addEventListener("change", () => {
+            const checked = catCheck.checked;
+            section.querySelectorAll(".tweak-checkbox").forEach(cb => { cb.checked = checked; });
+        });
+        const catLabel = createElement("label", { className: "tweak-cat-label", htmlFor: `cat-${catName}` }, [
+            `${icon} ${catName}`,
+        ]);
+        const catDesc = createElement("span", { className: "tweak-cat-desc" }, [catData.description]);
+        header.append(catCheck, catLabel, catDesc);
+        section.appendChild(header);
+
+        // Tweak cards
+        const grid = createElement("div", { className: "tweak-grid" });
+
+        for (const tweak of catData.tweaks) {
+            const card = createElement("div", {
+                className: `tweak-card${tweak.current_state === true ? " active" : ""}${tweak.script_only ? " script-only" : ""}`,
+            });
+
+            // Checkbox + info row
+            const topRow = createElement("div", { className: "tweak-top" });
+            const checkbox = createElement("input", {
+                type: "checkbox",
+                className: "tweak-checkbox",
+                id: `tweak-${tweak.id}`,
+                value: tweak.id,
+            });
+            checkbox.dataset.requiresAdmin = tweak.requires_admin ? "1" : "0";
+            checkbox.dataset.scriptOnly = tweak.script_only ? "1" : "0";
+
+            const info = createElement("div", { className: "tweak-info" });
+            const nameRow = createElement("div", { className: "tweak-name-row" });
+            const name = createElement("span", { className: "tweak-name" }, [tweak.name]);
+
+            // Badges
+            const badges = createElement("span", { className: "tweak-badges" });
+            if (tweak.recommended === "on") {
+                badges.appendChild(createElement("span", { className: "badge badge-recommended" }, ["Recommended"]));
+            }
+            if (tweak.requires_admin) {
+                badges.appendChild(createElement("span", { className: "badge badge-admin" }, ["Admin"]));
+            }
+            if (tweak.script_only) {
+                badges.appendChild(createElement("span", { className: "badge badge-script" }, ["Script Only"]));
+            }
+            nameRow.append(name, badges);
+            info.appendChild(nameRow);
+
+            const desc = createElement("div", { className: "tweak-desc" }, [tweak.description]);
+            info.appendChild(desc);
+
+            // Current state indicator
+            const stateRow = createElement("div", { className: "tweak-state" });
+            if (tweak.current_state === true) {
+                stateRow.appendChild(createElement("span", { className: "state-on" }, ["✓ Enabled"]));
+            } else if (tweak.current_state === false) {
+                stateRow.appendChild(createElement("span", { className: "state-off" }, ["✗ Disabled"]));
+            } else {
+                stateRow.appendChild(createElement("span", { className: "state-unknown" }, ["? Unknown"]));
+            }
+            if (tweak.current_value !== null && tweak.current_value !== undefined) {
+                stateRow.appendChild(createElement("span", { className: "state-value" }, [` (current: ${tweak.current_value})`]));
+            }
+            info.appendChild(stateRow);
+
+            topRow.append(checkbox, info);
+            card.appendChild(topRow);
+            grid.appendChild(card);
+        }
+
+        section.appendChild(grid);
+        el.appendChild(section);
+    }
+}
+
+async function applySelectedTweaks() {
+    const btn = document.getElementById("btn-tweaks-apply");
+    const resultEl = document.getElementById("tweaks-result");
+    const selected = getSelectedTweakIds();
+
+    if (selected.length === 0) {
+        showToast("Select at least one tweak to apply", "info");
+        return;
+    }
+
+    // Warn about admin tweaks
+    const adminTweaks = selected.filter(id => {
+        const cb = document.querySelector(`input[value="${id}"]`);
+        return cb && cb.dataset.requiresAdmin === "1";
+    });
+    if (adminTweaks.length > 0) {
+        // Check if we might be running as admin (not easy to check from browser)
+        // Just show a note
+        showToast(`${adminTweaks.length} tweak(s) require admin rights. If they fail, run WinTools as Administrator.`, "info");
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Applying...";
+    resultEl.textContent = "";
+
+    try {
+        const res = await fetch(`${API}/tweaks/apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tweaks: selected, action: "apply" }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            const card = createElement("div", { className: "tweak-result-card success" });
+            card.appendChild(createElement("h4", {}, [`✓ Applied ${data.applied} tweak(s)`]));
+            if (data.failed > 0) {
+                card.appendChild(createElement("p", { style: "color:var(--orange);margin-top:4px;" }, [
+                    `${data.failed} tweak(s) failed — may require admin rights or restart`
+                ]));
+            }
+            // Show individual results
+            const details = createElement("div", { className: "tweak-result-details" });
+            for (const [id, result] of Object.entries(data.results)) {
+                const item = createElement("div", { className: `tweak-result-item${result.success ? "" : " failed"}` });
+                item.textContent = `${id}: ${result.success ? "✓ " + (result.message || "Applied") : "✗ " + (result.error || "Failed")}`;
+                details.appendChild(item);
+            }
+            card.appendChild(details);
+            resultEl.textContent = "";
+            resultEl.appendChild(card);
+            showToast(`Applied ${data.applied} tweak(s)!`, "success");
+
+            // Refresh state
+            setTimeout(() => loadTweaks(), 1000);
+        } else {
+            showToast(`Error: ${data.error || "Unknown error"}`, "error");
+        }
+    } catch (err) {
+        showToast(`Error: ${err.message}`, "error");
+    }
+
+    btn.disabled = false;
+    btn.textContent = "Apply Selected";
+}
+
+async function revertSelectedTweaks() {
+    const btn = document.getElementById("btn-tweaks-revert");
+    const resultEl = document.getElementById("tweaks-result");
+    const selected = getSelectedTweakIds();
+
+    if (selected.length === 0) {
+        showToast("Select at least one tweak to revert", "info");
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Reverting...";
+    resultEl.textContent = "";
+
+    try {
+        const res = await fetch(`${API}/tweaks/apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tweaks: selected, action: "revert" }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            const card = createElement("div", { className: "tweak-result-card" });
+            card.style.borderColor = "var(--orange)";
+            card.style.background = "var(--orange-bg)";
+            card.appendChild(createElement("h4", {}, [`↩ Reverted ${data.applied} tweak(s)`]));
+            const details = createElement("div", { className: "tweak-result-details" });
+            for (const [id, result] of Object.entries(data.results)) {
+                const item = createElement("div", { className: `tweak-result-item${result.success ? "" : " failed"}` });
+                item.textContent = `${id}: ${result.success ? "✓ " + (result.message || "Reverted") : "✗ " + (result.error || "Failed")}`;
+                details.appendChild(item);
+            }
+            card.appendChild(details);
+            resultEl.textContent = "";
+            resultEl.appendChild(card);
+            showToast(`Reverted ${data.applied} tweak(s)!`, "success");
+
+            setTimeout(() => loadTweaks(), 1000);
+        } else {
+            showToast(`Error: ${data.error || "Unknown error"}`, "error");
+        }
+    } catch (err) {
+        showToast(`Error: ${err.message}`, "error");
+    }
+
+    btn.disabled = false;
+    btn.textContent = "Revert Selected";
+}
+
+function getSelectedTweakIds() {
+    const ids = [];
+    document.querySelectorAll(".tweak-checkbox:checked").forEach(cb => {
+        ids.push(cb.value);
+    });
+    return ids;
+}
+
+function selectAllTweaks(checked) {
+    document.querySelectorAll(".tweak-checkbox").forEach(cb => {
+        cb.checked = checked;
+    });
+    // Also toggle category checkboxes
+    document.querySelectorAll(".tweak-cat-checkbox").forEach(cb => {
+        cb.checked = checked;
+        cb.indeterminate = false;
+    });
 }
 
 // ── Initialize ────────────────────────────────────────────────────

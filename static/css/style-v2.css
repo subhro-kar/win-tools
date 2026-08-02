@@ -1461,3 +1461,235 @@ body {
     background: var(--bg-card);
     border-color: var(--border-light);
 }
+
+/* ── Tweaks Tab ──────────────────────────────────────────────────── */
+
+.tweaks-actions {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.tweaks-actions .btn {
+    padding: 8px 16px;
+    font-size: 13px;
+}
+
+.tweaks-content {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+
+.tweak-category {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+}
+
+.tweak-category-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.tweak-cat-checkbox {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.tweak-cat-label {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.tweak-cat-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-left: auto;
+    font-style: italic;
+}
+
+.tweak-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 12px;
+}
+
+.tweak-card {
+    display: flex;
+    flex-direction: column;
+    padding: 14px 16px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    transition: all 0.15s ease;
+    cursor: default;
+}
+
+.tweak-card:hover {
+    border-color: var(--border-light);
+    background: var(--bg-hover);
+}
+
+.tweak-card.active {
+    border-color: var(--green);
+    background: rgba(63, 185, 80, 0.05);
+}
+
+.tweak-card.script-only {
+    border-style: dashed;
+}
+
+.tweak-top {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.tweak-checkbox {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.tweak-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.tweak-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.tweak-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.tweak-badges {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    line-height: 1.4;
+}
+
+.badge-recommended {
+    background: var(--green-bg);
+    color: var(--green);
+    border: 1px solid var(--green);
+}
+
+.badge-admin {
+    background: var(--orange-bg);
+    color: var(--orange);
+    border: 1px solid var(--orange);
+}
+
+.badge-script {
+    background: var(--purple-bg);
+    color: var(--purple);
+    border: 1px solid var(--purple);
+}
+
+.tweak-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    line-height: 1.4;
+}
+
+.tweak-state {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+.state-on {
+    color: var(--green);
+    font-weight: 600;
+}
+
+.state-off {
+    color: var(--red);
+    font-weight: 600;
+}
+
+.state-unknown {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.state-value {
+    color: var(--text-muted);
+    font-family: monospace;
+    font-size: 11px;
+}
+
+.tweak-result-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.tweak-result-card.success {
+    border-color: var(--green);
+    background: var(--green-bg);
+}
+
+.tweak-result-card h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.tweak-result-details {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 8px;
+}
+
+.tweak-result-item {
+    font-size: 12px;
+    padding: 2px 0;
+    color: var(--text-secondary);
+}
+
+.tweak-result-item.failed {
+    color: var(--red);
+}
+
+.tweaks-result {
+    margin-bottom: 16px;
+}

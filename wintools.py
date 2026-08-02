@@ -14,6 +14,7 @@ import webview
 from flask import Flask, render_template, jsonify, request
 
 from software_catalog import SOFTWARE_CATALOG, CATEGORY_ORDER, CATEGORY_COLORS
+from tweaks import TWEAK_CATEGORIES, get_tweak_by_id
 from migrate import (
     generate_key, encrypt_data, decrypt_data, create_bundle, extract_bundle,
     get_secrets_summary, test_r2_connection, upload_to_r2, download_from_r2,
@@ -25,7 +26,12 @@ from migrate import (
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 SCAN_SCRIPT = BASE_DIR / "scan-apps.ps1"
+SCAN_TWEAKS_SCRIPT = BASE_DIR / "scan-tweaks.ps1"
 APPS_JSON = DATA_DIR / "installed-apps.json"
+
+# Cached tweak states (refreshed on scan)
+_tweak_states_cache = {}
+_tweak_states_time = 0
 
 app = Flask(
     __name__,
@@ -86,6 +92,162 @@ def run_winget_install(winget_id):
             install_queue[winget_id] = {"status": "failed", "output": "\n".join(output_lines[-30:]), "percent": 100, "error": f"Exit code {process.returncode}"}
     except Exception as e:
         install_queue[winget_id] = {"status": "failed", "output": str(e), "percent": 100, "error": str(e)}
+
+
+# ── Tweak State Scanning ────────────────────────────────────────────────
+
+def scan_tweak_states():
+    """Run scan-tweaks.ps1 and return current Windows settings states."""
+    global _tweak_states_cache, _tweak_states_time
+    # Cache for 30 seconds
+    if _tweak_states_cache and (time.time() - _tweak_states_time) < 30:
+        return _tweak_states_cache
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCAN_TWEAKS_SCRIPT)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            states = json.loads(result.stdout.strip())
+            # Convert string "True"/"False" to bool
+            for key, val in states.items():
+                if isinstance(val.get("is_on"), str):
+                    val["is_on"] = val["is_on"].lower() == "true"
+            _tweak_states_cache = states
+            _tweak_states_time = time.time()
+            return states
+    except Exception as e:
+        print(f"[ERROR] scan-tweak-states: {e}")
+
+    return {}
+
+
+def apply_tweaks(tweak_ids):
+    """Apply selected tweaks by running registry commands and service changes."""
+    results = {}
+    commands = []
+
+    for tid in tweak_ids:
+        tweak = get_tweak_by_id(tid)
+        if not tweak:
+            results[tid] = {"success": False, "error": "Unknown tweak"}
+            continue
+
+        tweak_commands = []
+
+        # Build registry commands
+        for reg in tweak.get("registry", []):
+            path = reg["path"]
+            name = reg["name"]
+            value = reg["value_on"]
+            reg_type = reg.get("type", "REG_DWORD")
+            # reg.exe uses HKCU\ or HKLM\ format, PowerShell uses HKCU:\ or HKLM:\
+            # For reg.exe, keep backslash format
+            if reg_type == "REG_SZ":
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d "{value}" /f')
+            else:
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d {value} /f')
+
+        # Build service commands
+        for svc in tweak.get("services", {}).get("on", []):
+            svc_name = svc["name"]
+            svc_type = svc["startup_type"]
+            tweak_commands.append(f"Set-Service -Name '{svc_name}' -StartupType {svc_type}")
+            # Also stop the service if disabling
+            if svc_type in ("Disabled", "Manual"):
+                tweak_commands.append(f"Stop-Service -Name '{svc_name}' -Force -ErrorAction SilentlyContinue")
+
+        # Add explicit commands
+        for cmd in tweak.get("commands", {}).get("on", []):
+            tweak_commands.append(cmd)
+
+        if tweak_commands:
+            combined = "; ".join(tweak_commands)
+            commands.append((tid, combined))
+        else:
+            results[tid] = {"success": True, "message": "No commands needed"}
+
+    # Run all commands via PowerShell
+    for tid, cmd in commands:
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode == 0:
+                results[tid] = {"success": True, "message": "Applied"}
+            else:
+                results[tid] = {"success": False, "error": r.stderr.strip()[:200]}
+        except Exception as e:
+            results[tid] = {"success": False, "error": str(e)[:200]}
+
+    # Invalidate cache so next scan reads fresh values
+    _tweak_states_cache = {}
+    _tweak_states_time = 0
+
+    return results
+
+
+def revert_tweaks(tweak_ids):
+    """Revert selected tweaks back to their original state."""
+    results = {}
+    commands = []
+
+    for tid in tweak_ids:
+        tweak = get_tweak_by_id(tid)
+        if not tweak:
+            results[tid] = {"success": False, "error": "Unknown tweak"}
+            continue
+
+        tweak_commands = []
+
+        # Build registry commands with value_off
+        for reg in tweak.get("registry", []):
+            path = reg["path"]
+            name = reg["name"]
+            value = reg["value_off"]
+            reg_type = reg.get("type", "REG_DWORD")
+            if reg_type == "REG_SZ":
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d "{value}" /f')
+            else:
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d {value} /f')
+
+        # Build service commands with off values
+        for svc in tweak.get("services", {}).get("off", []):
+            svc_name = svc["name"]
+            svc_type = svc["startup_type"]
+            tweak_commands.append(f"Set-Service -Name '{svc_name}' -StartupType {svc_type}")
+            if svc_type in ("Automatic", "Manual"):
+                tweak_commands.append(f"Start-Service -Name '{svc_name}' -ErrorAction SilentlyContinue")
+
+        # Add off commands
+        for cmd in tweak.get("commands", {}).get("off", []):
+            tweak_commands.append(cmd)
+
+        if tweak_commands:
+            combined = "; ".join(tweak_commands)
+            commands.append((tid, combined))
+        else:
+            results[tid] = {"success": True, "message": "No commands needed"}
+
+    for tid, cmd in commands:
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode == 0:
+                results[tid] = {"success": True, "message": "Reverted"}
+            else:
+                results[tid] = {"success": False, "error": r.stderr.strip()[:200]}
+        except Exception as e:
+            results[tid] = {"success": False, "error": str(e)[:200]}
+
+    _tweak_states_cache = {}
+    _tweak_states_time = 0
+
+    return results
 
 
 # ── Flask Routes ────────────────────────────────────────────────────────
@@ -477,6 +639,62 @@ def api_migrate_r2_credentials_delete():
     if cred_path.exists():
         cred_path.unlink()
     return jsonify({"success": True})
+
+
+# ── Tweaks Routes ────────────────────────────────────────────────────────
+
+@app.route("/api/tweaks")
+def api_tweaks():
+    """Return all tweak definitions with current Windows states."""
+    states = scan_tweak_states()
+    result = {}
+    for cat_name, cat_data in TWEAK_CATEGORIES.items():
+        result[cat_name] = {
+            "icon": cat_data["icon"],
+            "description": cat_data["description"],
+            "tweaks": [],
+        }
+        for tweak in cat_data["tweaks"]:
+            state = states.get(tweak["id"], {"is_on": None, "current_value": None})
+            entry = {
+                "id": tweak["id"],
+                "name": tweak["name"],
+                "description": tweak["description"],
+                "recommended": tweak.get("recommended", "off"),
+                "requires_admin": tweak.get("requires_admin", False),
+                "script_only": tweak.get("script_only", False),
+                "current_state": state.get("is_on"),
+                "current_value": state.get("current_value"),
+            }
+            result[cat_name]["tweaks"].append(entry)
+    return jsonify(result)
+
+
+@app.route("/api/tweaks/apply", methods=["POST"])
+def api_tweaks_apply():
+    """Apply selected tweaks. Body: {"tweaks": ["dark_mode", ...], "action": "apply"|"revert"}"""
+    data = request.json or {}
+    tweak_ids = data.get("tweaks", [])
+    action = data.get("action", "apply")
+
+    if not tweak_ids:
+        return jsonify({"success": False, "error": "No tweaks selected"})
+
+    if action == "revert":
+        results = revert_tweaks(tweak_ids)
+    else:
+        results = apply_tweaks(tweak_ids)
+
+    success_count = sum(1 for v in results.values() if v.get("success"))
+    fail_count = len(results) - success_count
+
+    return jsonify({
+        "success": True,
+        "results": results,
+        "applied": success_count,
+        "failed": fail_count,
+        "action": action,
+    })
 
 class Api:
     """JS-callable API for pywebview's window.pywebview.api bridge."""
