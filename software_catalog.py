@@ -151,6 +151,7 @@ SOFTWARE_CATALOG = [
     {"name": "Angry IP Scanner", "id": "angryziber.AngryIPScanner", "category": "Pro Tools", "description": "Open-source network scanner", "link": "https://angryip.org/", "icon": "", "match": ["angry ip scanner"], "foss": True},
     {"name": "Nmap", "id": "Insecure.Nmap", "category": "Pro Tools", "description": "Network port scanner", "link": "https://nmap.org/", "icon": "", "match": ["nmap"], "foss": True},
     {"name": "Wireshark", "id": "WiresharkFoundation.Wireshark", "category": "Pro Tools", "description": "Network protocol analyzer", "link": "https://www.wireshark.org/", "icon": "", "match": ["wireshark"], "foss": True},
+    {"name": "Npcap", "id": "", "category": "Pro Tools", "description": "Network packet capture driver for Wireshark & Nmap", "link": "https://npcap.com/", "icon": "", "match": ["npcap"], "foss": True},
     {"name": "WinSCP", "id": "WinSCP.WinSCP", "category": "Pro Tools", "description": "SFTP/SCP client", "link": "https://winscp.net/", "icon": "", "match": ["winscp"], "foss": True},
     {"name": "PuTTY", "id": "PuTTY.PuTTY", "category": "Pro Tools", "description": "SSH and Telnet client", "link": "https://www.chiark.greenend.org.uk/~sgtatham/putty/", "icon": "", "match": ["putty"], "foss": True},
     {"name": "WireGuard", "id": "WireGuard.WireGuard", "category": "Pro Tools", "description": "Fast VPN tunnel", "link": "https://www.wireguard.com/", "icon": "", "match": ["wireguard"], "foss": True},

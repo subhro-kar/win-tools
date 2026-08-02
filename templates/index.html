@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>WinTools Dashboard</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style-v2.css">
 </head>
 <body>
     <div class="app">
@@ -34,6 +37,10 @@
                 <li class="nav-tab" data-tab="export">
                     <span class="tab-icon">&#128190;</span>
                     <span class="tab-label">Export</span>
+                </li>
+                <li class="nav-tab" data-tab="sync">
+                    <span class="tab-icon">&#128274;</span>
+                    <span class="tab-label">Sync</span>
                 </li>
             </ul>
 
@@ -105,11 +112,128 @@
                     <div class="loading">Loading...</div>
                 </div>
             </section>
+
+            <!-- Sync Tab (Secrets Backup & Restore) -->
+            <section id="tab-sync" class="tab-content">
+                <div class="tab-header">
+                    <h1>Sync Secrets</h1>
+                    <p class="tab-desc">Back up SSH keys, Git config, environment variables, and more. Encrypted and uploaded to Cloudflare R2 — restore on any machine.</p>
+                </div>
+
+                <!-- Mode toggle -->
+                <div class="sync-mode-toggle">
+                    <button id="sync-mode-backup" class="btn btn-accent" onclick="setSyncMode('backup')">Backup</button>
+                    <button id="sync-mode-restore" class="btn" onclick="setSyncMode('restore')">Restore</button>
+                </div>
+
+                <!-- Backup Mode -->
+                <div id="sync-backup" class="sync-section">
+                    <!-- Quick Connect -->
+                    <div class="sync-card sync-quickconnect">
+                        <h3>⚡ Quick Connect</h3>
+                        <p class="sync-card-desc">Paste your Cloudflare API token and we'll auto-configure everything — bucket, credentials, the works.</p>
+                        <div class="sync-form">
+                            <label>Cloudflare API Token</label>
+                            <input type="password" id="cf-api-token" placeholder="Paste your Cloudflare API token here">
+                            <label>Bucket Name <span style="color:var(--text-muted);font-weight:400;text-transform:none;">(auto-created if it doesn't exist)</span></label>
+                            <input type="text" id="cf-bucket-name" placeholder="wintools-backup" value="wintools-backup">
+                            <button class="btn btn-accent" id="btn-quick-connect" onclick="quickConnect()">⚡ Connect &amp; Configure</button>
+                            <span id="quick-connect-result" class="sync-status"></span>
+                        </div>
+                        <a class="sync-guide-toggle" onclick="toggleSyncGuide()">Where do I get an API token? ▾</a>
+                        <div class="sync-guide" id="sync-r2-guide">
+                            <div class="sync-guide-steps">
+                                <div class="sync-guide-step">
+                                    <span class="sync-guide-num">1</span>
+                                    <div class="sync-guide-body">
+                                        <strong>Create a Cloudflare API Token</strong>
+                                        <p>Go to <strong>My Profile → API Tokens → Create Token → Create Custom Token</strong>. Set permission to <strong>Account → Workers R2 Storage → Admin Read &amp; Write</strong>. This lets WinTools create a bucket and read/write your backups.</p>
+                                        <a class="sync-guide-link" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">Create API Token →</a>
+                                    </div>
+                                </div>
+                                <div class="sync-guide-step">
+                                    <span class="sync-guide-num">2</span>
+                                    <div class="sync-guide-body">
+                                        <strong>Copy the token value</strong>
+                                        <p>After creating the token, Cloudflare shows the token value <strong>once</strong>. Copy it — this is what you paste above.</p>
+                                        <div class="sync-guide-warning">⚠ The token value is only shown once. Copy it before leaving the page!</div>
+                                    </div>
+                                </div>
+                                <div class="sync-guide-step">
+                                    <span class="sync-guide-num">3</span>
+                                    <div class="sync-guide-body">
+                                        <strong>Paste &amp; click Connect</strong>
+                                        <p>We'll verify the token, create an R2 bucket (if needed), derive S3 credentials, and auto-fill the form below. Your token is <strong>never stored</strong> — it's used once during setup only.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Manual R2 Credentials -->
+                    <div class="sync-card">
+                        <h3>Or Enter R2 Credentials Manually</h3>
+                        <p class="sync-card-desc">If you already have R2 Access Key ID and Secret Access Key, enter them here.</p>
+                        <div class="sync-form">
+                            <label>Account ID</label>
+                            <input type="text" id="r2-account-id" placeholder="Your Cloudflare account ID">
+                            <label>Access Key ID</label>
+                            <input type="text" id="r2-access-key" placeholder="R2 access key ID">
+                            <label>Secret Access Key</label>
+                            <input type="password" id="r2-secret-key" placeholder="R2 secret access key">
+                            <label>Bucket Name</label>
+                            <input type="text" id="r2-bucket" placeholder="e.g. wintools-backup" value="wintools-backup">
+                            <button class="btn btn-sm" id="btn-r2-test" onclick="testR2Connection()">Test Connection</button>
+                            <span id="r2-test-result" class="sync-status"></span>
+                        </div>
+                    </div>
+
+                    <!-- What to back up -->
+                    <div class="sync-card">
+                        <h3>What to Back Up</h3>
+                        <div id="sync-checklist" class="sync-checklist">
+                            <div class="loading">Scanning...</div>
+                        </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="sync-actions">
+                        <button class="btn btn-green" id="btn-backup-r2" onclick="backupToR2()">🔄 Sync to R2</button>
+                        <button class="btn btn-accent" id="btn-backup-local" onclick="backupToLocal()" style="display:none;">Save Encrypted Bundle Locally</button>
+                    </div>
+                    <div id="backup-result" class="sync-result"></div>
+                </div>
+
+                <!-- Restore Mode -->
+                <div id="sync-restore" class="sync-section" style="display:none;">
+                    <div class="sync-card">
+                        <h3>Restore from Backup</h3>
+                        <p class="sync-card-desc">Upload your encryption key and encrypted bundle to restore your secrets.</p>
+                        <div class="sync-form">
+                            <label>Encryption Key (.key file)</label>
+                            <input type="file" id="restore-key-file" accept=".key">
+                            <label>Encrypted Bundle (.encrypted file)</label>
+                            <input type="file" id="restore-bundle-file" accept=".encrypted">
+                            <button class="btn btn-accent" id="btn-restore-load" onclick="loadRestoreBundle()">Load Bundle</button>
+                        </div>
+                    </div>
+                    <div id="restore-checklist-wrapper" style="display:none;">
+                        <div class="sync-card">
+                            <h3>What to Restore</h3>
+                            <div id="restore-checklist" class="sync-checklist"></div>
+                        </div>
+                        <div class="sync-actions">
+                            <button class="btn btn-green" id="btn-restore-apply" onclick="applyRestore()">Restore Selected Items</button>
+                        </div>
+                    </div>
+                    <div id="restore-result" class="sync-result"></div>
+                </div>
+            </section>
         </main>
     </div>
 
     <div id="toast-container"></div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app-v2.js"></script>
 </body>
 </html>

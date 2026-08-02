@@ -14,6 +14,11 @@ import webview
 from flask import Flask, render_template, jsonify, request
 
 from software_catalog import SOFTWARE_CATALOG, CATEGORY_ORDER, CATEGORY_COLORS
+from migrate import (
+    generate_key, encrypt_data, decrypt_data, create_bundle, extract_bundle,
+    get_secrets_summary, test_r2_connection, upload_to_r2, download_from_r2,
+    list_r2_backups, apply_restore, cloudflare_auto_setup,
+)
 
 # ── Paths ──────────────────────────────────────────────────────────────
 
@@ -27,6 +32,14 @@ app = Flask(
     static_folder=str(BASE_DIR / "static"),
     template_folder=str(BASE_DIR / "templates"),
 )
+
+# Disable caching for pywebview — ensures fresh JS/CSS on every load
+@app.after_request
+def no_cache(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 # Track install progress
 install_queue = {}
@@ -223,7 +236,279 @@ def api_winget_search():
         return jsonify({"error": str(e)}), 500
 
 
-# ── Flask Server & Desktop Window ────────────────────────────────────────
+# ── Migration Routes ────────────────────────────────────────────────────
+
+# Store the current encryption key in memory (never persisted to disk)
+_migration_key = None
+_migration_manifest = None
+
+
+@app.route("/api/migrate/scan")
+def api_migrate_scan():
+    """Scan the current system for migration items."""
+    try:
+        summary = get_secrets_summary()
+        return jsonify(summary)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/migrate/export", methods=["POST"])
+def api_migrate_export():
+    """Create an encrypted bundle and upload to R2 (or download as file)."""
+    global _migration_key, _migration_manifest
+
+    data = request.json or {}
+    selected = data.get("items", {})
+    destination = data.get("destination", "r2")  # "r2" or "local"
+    credentials = data.get("credentials", {})
+
+    try:
+        # Reuse existing key if available, otherwise generate new one
+        key_path = DATA_DIR / "migration.key"
+        if key_path.exists():
+            key = key_path.read_bytes()
+            _migration_key = key.decode("utf-8")
+        else:
+            key = generate_key()
+            _migration_key = key.decode("utf-8")
+            # Save key for future syncs
+            key_path.write_bytes(key)
+
+        encrypted, manifest = create_bundle(selected, key)
+        _migration_manifest = manifest
+
+        result = {"success": True, "key": _migration_key, "manifest": manifest, "size": len(encrypted)}
+
+        if destination == "r2" and credentials:
+            upload_result = upload_to_r2(encrypted, credentials)
+            result["upload"] = upload_result
+
+        # Store encrypted bundle temporarily for download
+        bundle_path = DATA_DIR / "migration-bundle.encrypted"
+        bundle_path.write_bytes(encrypted)
+        result["downloadUrl"] = "/api/migrate/download-bundle"
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/migrate/download-bundle")
+def api_migrate_download_bundle():
+    """Download the encrypted bundle file."""
+    bundle_path = DATA_DIR / "migration-bundle.encrypted"
+    if not bundle_path.exists():
+        return jsonify({"error": "No bundle available. Run export first."}), 404
+
+    from flask import send_file
+    return send_file(bundle_path, as_attachment=True, download_name="wintools-migration.encrypted")
+
+
+@app.route("/api/migrate/download-key")
+def api_migrate_download_key():
+    """Download the encryption key file."""
+    global _migration_key
+    if not _migration_key:
+        return jsonify({"error": "No key available. Run export first."}), 404
+
+    from flask import send_file
+    import io
+    key_bytes = _migration_key.encode("utf-8")
+    return send_file(
+        io.BytesIO(key_bytes),
+        as_attachment=True,
+        download_name="wintools-migration.key",
+        mimetype="text/plain",
+    )
+
+
+@app.route("/api/migrate/import", methods=["POST"])
+def api_migrate_import():
+    """Import an encrypted bundle (from R2 or uploaded file)."""
+    global _migration_manifest
+
+    data = request.json or {}
+    source = data.get("source", "local")  # "r2" or "local"
+    credentials = data.get("credentials", {})
+    object_key = data.get("objectKey", "")
+
+    try:
+        if source == "r2" and credentials:
+            dl_result = download_from_r2(credentials, object_key)
+            if not dl_result["success"]:
+                return jsonify(dl_result), 500
+            encrypted_data = dl_result["data"]
+        else:
+            # Read from uploaded file
+            bundle_path = DATA_DIR / "migration-upload.encrypted"
+            if not bundle_path.exists():
+                return jsonify({"error": "No uploaded bundle found"}), 400
+            encrypted_data = bundle_path.read_bytes()
+
+        # Key is provided by the client
+        key_str = data.get("key", "")
+        if not key_str:
+            return jsonify({"error": "Encryption key required"}), 400
+
+        key = key_str.encode("utf-8")
+        bundle = extract_bundle(encrypted_data, key)
+        _migration_manifest = bundle["manifest"]
+
+        return jsonify({"success": True, "manifest": bundle["manifest"]})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/migrate/upload-bundle", methods=["POST"])
+def api_migrate_upload_bundle():
+    """Upload an encrypted bundle file for import."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files["file"]
+    bundle_path = DATA_DIR / "migration-upload.encrypted"
+    file.save(bundle_path)
+
+    return jsonify({"success": True, "size": bundle_path.stat().st_size})
+
+
+@app.route("/api/migrate/apply", methods=["POST"])
+def api_migrate_apply():
+    """Apply selected restore items from an imported bundle."""
+    global _migration_manifest
+
+    data = request.json or {}
+    selected = data.get("items", {})
+    key_str = data.get("key", "")
+    source = data.get("source", "local")
+
+    try:
+        # Load the encrypted bundle
+        if source == "local":
+            bundle_path = DATA_DIR / "migration-upload.encrypted"
+        else:
+            bundle_path = DATA_DIR / "migration-bundle.encrypted"
+
+        if not bundle_path.exists():
+            return jsonify({"error": "No bundle found. Import first."}), 400
+
+        encrypted_data = bundle_path.read_bytes()
+        key = key_str.encode("utf-8")
+        bundle = extract_bundle(encrypted_data, key)
+
+        results = apply_restore(bundle, selected)
+        return jsonify({"success": True, "results": results})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/migrate/r2-test", methods=["POST"])
+def api_migrate_r2_test():
+    """Test R2 connection credentials."""
+    credentials = request.json or {}
+    result = test_r2_connection(credentials)
+    return jsonify(result)
+
+
+@app.route("/api/migrate/r2-list", methods=["POST"])
+def api_migrate_r2_list():
+    """List available backups in R2."""
+    credentials = request.json or {}
+    result = list_r2_backups(credentials)
+    return jsonify(result)
+
+
+@app.route("/api/migrate/r2-auto-setup", methods=["POST"])
+def api_migrate_r2_auto_setup():
+    """One-click R2 setup: verify token, create bucket + scoped R2 token, return S3 credentials."""
+    print("[DEBUG] r2-auto-setup called")
+    data = request.json or {}
+    api_token = data.get("api_token", "")
+    bucket_name = data.get("bucket_name", "wintools-backup")
+
+    print(f"[DEBUG] api_token length: {len(api_token)}, bucket_name: {bucket_name}")
+
+    if not api_token:
+        return jsonify({"success": False, "error": "Cloudflare API token is required"})
+
+    try:
+        result = cloudflare_auto_setup(api_token, bucket_name)
+        print(f"[DEBUG] result success: {result.get('success')}, keys: {list(result.keys())}")
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        print(f"[DEBUG] EXCEPTION: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Setup failed: {str(e)}"})
+
+
+@app.route("/api/migrate/r2-credentials", methods=["GET"])
+def api_migrate_r2_credentials_load():
+    """Load saved R2 credentials from disk."""
+    cred_path = DATA_DIR / "r2-credentials.json"
+    if not cred_path.exists():
+        return jsonify({"connected": False})
+    try:
+        with open(cred_path, encoding="utf-8") as f:
+            creds = json.load(f)
+        return jsonify({"connected": True, **creds})
+    except Exception:
+        return jsonify({"connected": False})
+
+
+@app.route("/api/migrate/r2-credentials", methods=["POST"])
+def api_migrate_r2_credentials_save():
+    """Save R2 credentials to disk so they persist across app restarts."""
+    data = request.json or {}
+    cred_path = DATA_DIR / "r2-credentials.json"
+    try:
+        with open(cred_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/migrate/r2-credentials", methods=["DELETE"])
+def api_migrate_r2_credentials_delete():
+    """Delete saved R2 credentials (disconnect)."""
+    cred_path = DATA_DIR / "r2-credentials.json"
+    if cred_path.exists():
+        cred_path.unlink()
+    return jsonify({"success": True})
+
+class Api:
+    """JS-callable API for pywebview's window.pywebview.api bridge."""
+    def saveFile(self, b64_data, filename):
+        """Save base64-encoded data to a file via native save dialog."""
+        import base64
+        result = webview.windows[0].create_file_dialog(
+            webview.SAVE_DIALOG,
+            save_filename=filename,
+            file_types=("Encrypted Files (*.encrypted)", "All Files (*.*)"),
+        )
+        if result:
+            path = result if isinstance(result, str) else result[0]
+            with open(path, "wb") as f:
+                f.write(base64.b64decode(b64_data))
+            return path
+        return None
+
+    def saveTextFile(self, text, filename):
+        """Save text to a file via native save dialog."""
+        result = webview.windows[0].create_file_dialog(
+            webview.SAVE_DIALOG,
+            save_filename=filename,
+            file_types=("Key Files (*.key)", "Text Files (*.txt)", "All Files (*.*)"),
+        )
+        if result:
+            path = result if isinstance(result, str) else result[0]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            return path
+        return None
+
 
 def start_flask():
     app.run(host="127.0.0.1", port=18080, debug=False, use_reloader=False)
@@ -231,6 +516,20 @@ def start_flask():
 
 if __name__ == "__main__":
     DATA_DIR.mkdir(exist_ok=True)
+
+    # Clear all WebView2 cache directories so JS/CSS always loads fresh
+    import shutil
+    import glob
+    for cache_dir in glob.glob(str(Path.home() / "AppData" / "Local" / "*" / "WinTools*" / "EBWebView")):
+        try:
+            shutil.rmtree(cache_dir, ignore_errors=True)
+        except Exception:
+            pass
+    for cache_dir in glob.glob(str(Path.home() / "AppData" / "Local" / "pywebview" / "**" / "EBWebView")):
+        try:
+            shutil.rmtree(cache_dir, ignore_errors=True)
+        except Exception:
+            pass
 
     if not APPS_JSON.exists():
         print("No existing data found. Running initial scan...")
@@ -245,13 +544,17 @@ if __name__ == "__main__":
     print("  Opening in native window...")
     print("=" * 50 + "\n")
 
+    api = Api()
+    import uuid
+    session_id = uuid.uuid4().hex[:8]
     window = webview.create_window(
         "WinTools Dashboard",
-        "http://127.0.0.1:18080",
+        f"http://127.0.0.1:18080/?_={session_id}",
         width=1400,
         height=900,
         min_size=(900, 600),
         resizable=True,
+        js_api=api,
     )
     webview.start()
     print("WinTools closed.")
