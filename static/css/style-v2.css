@@ -1364,6 +1364,41 @@ body {
     color: var(--orange);
 }
 
+.sync-file-toggle {
+    display: inline-block;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--accent);
+    margin-left: 4px;
+    user-select: none;
+    transition: transform 0.15s;
+}
+
+.sync-file-toggle:hover {
+    color: var(--accent-hover, #4a9eff);
+}
+
+.sync-file-list {
+    margin: 4px 0 4px 28px;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 6px);
+    font-size: 12px;
+    color: var(--text-dim, #aaa);
+    line-height: 1.6;
+    max-height: 160px;
+    overflow-y: auto;
+}
+
+.sync-file-item {
+    padding: 1px 0;
+    font-family: var(--font-mono, 'Consolas', monospace);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .sync-actions {
     display: flex;
     gap: 12px;

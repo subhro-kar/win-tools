@@ -728,6 +728,7 @@ async function loadSync() {
                     ? `${syncData.ssh.keyCount} key(s) in ${syncData.ssh.dir} (public keys & config only — private keys excluded)`
                     : "No SSH keys found",
                 count: syncData.ssh?.keyCount || 0,
+                files: (syncData.ssh?.files || []).map(f => f.Name).filter(n => !n.endsWith(".old")),
             },
             {
                 key: "git",
@@ -736,6 +737,7 @@ async function loadSync() {
                 detail: syncData.git?.found
                     ? `Found: ${syncData.git.path}`
                     : "No .gitconfig found",
+                files: syncData.git?.found ? [".gitconfig"] : [],
             },
             {
                 key: "envVars",
@@ -745,6 +747,7 @@ async function loadSync() {
                     ? `${syncData.envVars.count} user environment variables`
                     : "No user env vars found",
                 count: syncData.envVars?.count || 0,
+                files: syncData.envVars?.found ? Object.keys(syncData.envVars.vars || {}) : [],
             },
             {
                 key: "psProfile",
@@ -753,6 +756,7 @@ async function loadSync() {
                 detail: syncData.psProfile?.found
                     ? `Found: ${syncData.psProfile.path}`
                     : "No PowerShell 5 profile found",
+                files: syncData.psProfile?.found ? ["Microsoft.PowerShell_profile.ps1"] : [],
             },
             {
                 key: "ps7profile",
@@ -761,6 +765,7 @@ async function loadSync() {
                 detail: syncData.ps7profile?.found
                     ? `Found: ${syncData.ps7profile.path}`
                     : "No PowerShell 7 profile found",
+                files: syncData.ps7profile?.found ? ["Microsoft.PowerShell7_profile.ps1"] : [],
             },
             {
                 key: "gpg",
@@ -771,6 +776,7 @@ async function loadSync() {
                     : syncData.gpg?.available
                         ? "No GPG secret keys found"
                         : "GPG not installed",
+                files: syncData.gpg?.found ? ["gpg-secret-keys.asc"] : [],
             },
             {
                 key: "windowsTerminal",
@@ -779,6 +785,7 @@ async function loadSync() {
                 detail: syncData.windowsTerminal?.found
                     ? `Found: ${syncData.windowsTerminal.path}`
                     : "Windows Terminal settings not found",
+                files: syncData.windowsTerminal?.found ? ["settings.json"] : [],
             },
             {
                 key: "claude",
@@ -788,6 +795,9 @@ async function loadSync() {
                     ? `${syncData.claude.skills} skill(s) + settings`
                     : "No Claude Code config found",
                 count: syncData.claude?.skills || 0,
+                files: syncData.claude?.found
+                    ? ["settings.json", ...(syncData.claude.hasLocalSettings ? ["settings.local.json"] : []), ...(syncData.claude.skills ? [`${syncData.claude.skills} skills/`] : [])]
+                    : [],
             },
             {
                 key: "npm",
@@ -797,6 +807,7 @@ async function loadSync() {
                     ? `${syncData.npm.count} global package(s)`
                     : "No npm global packages found",
                 count: syncData.npm?.count || 0,
+                files: (syncData.npm?.packages || []).map(p => `${p.name}@${p.version}`),
             },
             {
                 key: "copilot",
@@ -806,6 +817,7 @@ async function loadSync() {
                     ? `${Object.keys(syncData.copilot.files || {}).length} config file(s)`
                     : "No GitHub Copilot config found",
                 count: syncData.copilot?.files ? Object.keys(syncData.copilot.files).length : 0,
+                files: Object.keys(syncData.copilot?.files || {}),
             },
         ];
 
@@ -829,6 +841,26 @@ async function loadSync() {
                 : "Not found";
 
             label.append(checkbox, info, badge);
+
+            // Expandable file list
+            if (item.files && item.files.length > 0) {
+                const toggle = createElement("span", { className: "sync-file-toggle" }, ["▸"]);
+                const fileList = createElement("div", { className: "sync-file-list" });
+                for (const f of item.files) {
+                    fileList.appendChild(createElement("div", { className: "sync-file-item" }, [f]));
+                }
+                fileList.style.display = "none";
+                toggle.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const open = fileList.style.display !== "none";
+                    fileList.style.display = open ? "none" : "block";
+                    toggle.textContent = open ? "▸" : "▾";
+                });
+                label.appendChild(toggle);
+                label.appendChild(fileList);
+            }
+
             checklist.appendChild(label);
         }
 
