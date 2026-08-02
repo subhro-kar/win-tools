@@ -211,7 +211,7 @@
                 <!-- Restore Mode -->
                 <div id="sync-restore" class="sync-section" style="display:none;">
                     <div class="sync-card">
-                        <h3>Restore from Backup</h3>
+                        <h3>Restore from Local File</h3>
                         <p class="sync-card-desc">Upload your encryption key and encrypted bundle to restore your secrets.</p>
                         <div class="sync-form">
                             <label>Encryption Key (.key file)</label>
@@ -219,6 +219,32 @@
                             <label>Encrypted Bundle (.encrypted file)</label>
                             <input type="file" id="restore-bundle-file" accept=".encrypted">
                             <button class="btn btn-accent" id="btn-restore-load" onclick="loadRestoreBundle()">Load Bundle</button>
+                        </div>
+                    </div>
+                    <div class="sync-card">
+                        <h3>Restore from Cloudflare R2</h3>
+                        <p class="sync-card-desc">Download your backup from R2. You'll need your encryption key and R2 credentials.</p>
+                        <div class="sync-form">
+                            <a class="sync-guide-toggle" onclick="document.getElementById('r2-restore-creds').style.display = document.getElementById('r2-restore-creds').style.display === 'none' ? '' : 'none'">R2 Credentials ▾</a>
+                            <div id="r2-restore-creds" style="display:none;margin-bottom:12px;">
+                                <label>Account ID</label>
+                                <input type="text" id="restore-r2-account-id" placeholder="Cloudflare account ID">
+                                <label>Access Key ID</label>
+                                <input type="text" id="restore-r2-access-key" placeholder="R2 access key ID">
+                                <label>Secret Access Key</label>
+                                <input type="password" id="restore-r2-secret-key" placeholder="R2 secret access key">
+                                <label>Bucket Name</label>
+                                <input type="text" id="restore-r2-bucket" placeholder="wintools-backup" value="wintools-backup">
+                                <p style="font-size:11px;color:var(--text-muted);margin-top:4px;">If you used Quick Connect on your old machine, use the same credentials here.</p>
+                            </div>
+                            <label>Encryption Key (paste or upload)</label>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <input type="text" id="restore-r2-key" placeholder="Paste your encryption key here..." style="flex:1;font-family:monospace;font-size:12px;">
+                                <input type="file" id="restore-r2-key-file" accept=".key,.txt" style="display:none;">
+                                <button class="btn" onclick="document.getElementById('restore-r2-key-file').click()">Upload Key</button>
+                            </div>
+                            <button class="btn btn-accent" onclick="loadR2Backups()">List Backups</button>
+                            <div id="r2-backup-list" style="margin-top:12px;display:none;"></div>
                         </div>
                     </div>
                     <div id="restore-checklist-wrapper" style="display:none;">

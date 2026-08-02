@@ -641,7 +641,32 @@ def api_migrate_r2_credentials_delete():
     return jsonify({"success": True})
 
 
-# ── Tweaks Routes ────────────────────────────────────────────────────────
+@app.route("/api/migrate/r2-download", methods=["POST"])
+def api_migrate_r2_download():
+    """Download an encrypted bundle from R2 and save it locally for import."""
+    credentials = request.json or {}
+    object_key = credentials.get("object_key", "")
+    if not object_key:
+        return jsonify({"success": False, "error": "No object key specified"})
+
+    try:
+        result = download_from_r2(credentials, object_key)
+        if not result.get("success"):
+            return jsonify(result)
+
+        # Save downloaded data to migration-upload.encrypted so the import endpoint can find it
+        bundle_path = DATA_DIR / "migration-upload.encrypted"
+        bundle_path.write_bytes(result["data"])
+
+        return jsonify({
+            "success": True,
+            "size": len(result["data"]),
+            "object_key": object_key,
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
 
 @app.route("/api/tweaks")
 def api_tweaks():

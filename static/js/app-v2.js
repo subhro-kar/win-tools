@@ -1449,12 +1449,16 @@ async function loadRestoreBundle() {
 
         const items = restoreManifest.items || {};
         const itemDefs = [
-            { key: "ssh", label: "SSH Keys", pathKey: "dir" },
+            { key: "ssh", label: "SSH Config (public keys only)", pathKey: "dir" },
             { key: "git", label: "Git Config", pathKey: "path" },
             { key: "envVars", label: "Environment Variables", pathKey: null },
-            { key: "psProfile", label: "PowerShell Profile", pathKey: "path" },
+            { key: "psProfile", label: "PowerShell 5 Profile", pathKey: "path" },
+            { key: "ps7profile", label: "PowerShell 7 Profile", pathKey: "path" },
             { key: "gpg", label: "GPG Keys", pathKey: null },
             { key: "windowsTerminal", label: "Windows Terminal Settings", pathKey: "path" },
+            { key: "claude", label: "Claude Code Config", pathKey: "path" },
+            { key: "npm", label: "npm Global Packages", pathKey: null },
+            { key: "copilot", label: "GitHub Copilot Config", pathKey: "path" },
         ];
 
         for (const def of itemDefs) {
@@ -1469,9 +1473,12 @@ async function loadRestoreBundle() {
             info.appendChild(createElement("div", { className: "check-label" }, [def.label]));
 
             let detailText = "";
-            if (def.key === "ssh") detailText = `${item.fileCount} file(s) in ${item.dir}`;
+            if (def.key === "ssh") detailText = `${item.fileCount} file(s) — public keys & config only`;
             else if (def.key === "envVars") detailText = `${item.count} environment variable(s)`;
+            else if (def.key === "npm") detailText = `${item.count} global package(s)`;
             else if (def.key === "gpg") detailText = `${item.keyCount} secret key(s)`;
+            else if (def.key === "claude") detailText = `${item.fileCount || 0} file(s) including skills`;
+            else if (def.key === "copilot") detailText = `${item.fileCount || 0} config file(s)`;
             else if (item[def.pathKey]) detailText = `From: ${item[def.pathKey]}`;
 
             info.appendChild(createElement("div", { className: "check-detail" }, [detailText]));
@@ -1548,6 +1555,207 @@ async function applyRestore() {
     }
     btn.disabled = false;
     btn.textContent = "Restore Selected Items";
+}
+
+// ── R2 Restore ─────────────────────────────────────────────────────
+
+// Handle key file upload for R2 restore
+document.addEventListener("DOMContentLoaded", () => {
+    const keyFileInput = document.getElementById("restore-r2-key-file");
+    if (keyFileInput) {
+        keyFileInput.addEventListener("change", async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const keyText = await file.text();
+                document.getElementById("restore-r2-key").value = keyText.trim();
+            }
+        });
+    }
+});
+
+function getRestoreR2Credentials() {
+    // Prefer restore-mode credential fields, fallback to backup-mode fields
+    const accountId = document.getElementById("restore-r2-account-id")?.value?.trim()
+        || document.getElementById("r2-account-id")?.value?.trim() || "";
+    const accessKey = document.getElementById("restore-r2-access-key")?.value?.trim()
+        || document.getElementById("r2-access-key")?.value?.trim() || "";
+    const secretKey = document.getElementById("restore-r2-secret-key")?.value?.trim()
+        || document.getElementById("r2-secret-key")?.value?.trim() || "";
+    const bucket = document.getElementById("restore-r2-bucket")?.value?.trim()
+        || document.getElementById("r2-bucket")?.value?.trim() || "wintools-backup";
+    const computerName = (syncData && syncData.computerName) ? syncData.computerName : "";
+    return {
+        account_id: accountId,
+        access_key_id: accessKey,
+        secret_access_key: secretKey,
+        bucket_name: bucket,
+        ...(computerName && { computer_name: computerName }),
+    };
+}
+
+async function loadR2Backups() {
+    const keyText = document.getElementById("restore-r2-key").value.trim();
+    if (!keyText) {
+        showToast("Please enter your encryption key first", "error");
+        return;
+    }
+
+    const creds = getRestoreR2Credentials();
+    if (!creds.access_key_id) {
+        showToast("Enter R2 credentials (expand R2 Credentials above)", "error");
+        return;
+    }
+
+    const listEl = document.getElementById("r2-backup-list");
+    listEl.style.display = "block";
+    listEl.textContent = "";
+    listEl.appendChild(createElement("div", { className: "loading" }, ["Loading backups from R2..."]));
+
+    try {
+        const res = await fetch(`${API}/migrate/r2-list`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(creds),
+        });
+        const data = await res.json();
+
+        if (!data.success) {
+            listEl.textContent = "";
+            listEl.appendChild(createElement("div", { style: "color:var(--red);font-size:13px;" }, [`Error: ${data.message}`]));
+            return;
+        }
+
+        const backups = data.backups || [];
+        if (backups.length === 0) {
+            listEl.textContent = "";
+            listEl.appendChild(createElement("div", { style: "color:var(--text-muted);font-size:13px;" }, ["No backups found in R2."]));
+            return;
+        }
+
+        listEl.textContent = "";
+        listEl.appendChild(createElement("div", { style: "font-size:13px;margin-bottom:8px;font-weight:600;" }, [`${backups.length} backup(s) found:`]));
+
+        for (const backup of backups) {
+            const date = new Date(backup.lastModified).toLocaleString();
+            const sizeMB = (backup.size / 1024 / 1024).toFixed(2);
+            const fileName = backup.key.split("/").pop();
+            const item = createElement("div", { className: "sync-check-item", style: "cursor:pointer;margin:4px 0;" });
+            const info = createElement("div", { style: "flex:1;" });
+            info.appendChild(createElement("div", { style: "font-size:13px;font-weight:600;" }, [date]));
+            info.appendChild(createElement("div", { style: "font-size:11px;color:var(--text-muted);" }, [`${sizeMB} MB · ${fileName}`]));
+            const btn = createElement("button", { className: "btn btn-sm" }, ["Restore"]);
+            btn.addEventListener("click", () => restoreFromR2(backup.key));
+            item.append(info, btn);
+            listEl.appendChild(item);
+        }
+    } catch (err) {
+        listEl.textContent = "";
+        listEl.appendChild(createElement("div", { style: "color:var(--red);font-size:13px;" }, [`Error: ${err.message}`]));
+    }
+}
+
+async function restoreFromR2(objectKey) {
+    const keyText = document.getElementById("restore-r2-key").value.trim();
+    if (!keyText) {
+        showToast("Please enter your encryption key", "error");
+        return;
+    }
+
+    const creds = getRestoreR2Credentials();
+    if (!creds.access_key_id) {
+        showToast("Enter R2 credentials (expand R2 Credentials above)", "error");
+        return;
+    }
+
+    restoreKey = keyText;
+    const resultEl = document.getElementById("restore-result");
+    resultEl.textContent = "";
+    resultEl.appendChild(createElement("div", { className: "loading" }, ["Downloading backup from R2..."]));
+
+    try {
+        // Download from R2
+        const res = await fetch(`${API}/migrate/r2-download`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...creds, object_key: objectKey }),
+        });
+        const data = await res.json();
+
+        if (!data.success) {
+            throw new Error(data.error || data.message || "Failed to download from R2");
+        }
+
+        // The r2-download endpoint already saved to migration-upload.encrypted
+
+        // Now decrypt and show manifest
+        const decryptRes = await fetch(`${API}/migrate/import`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ source: "local", key: restoreKey }),
+        });
+        const decryptData = await decryptRes.json();
+
+        if (!decryptData.success) {
+            throw new Error(decryptData.error || "Failed to decrypt bundle. Check your key.");
+        }
+
+        restoreManifest = decryptData.manifest;
+        resultEl.textContent = "";
+
+        // Show restore checklist
+        const wrapper = document.getElementById("restore-checklist-wrapper");
+        wrapper.style.display = "";
+        const checklist = document.getElementById("restore-checklist");
+        checklist.textContent = "";
+
+        const items = restoreManifest.items || {};
+        const itemDefs = [
+            { key: "ssh", label: "SSH Config (public keys only)", pathKey: "dir" },
+            { key: "git", label: "Git Config", pathKey: "path" },
+            { key: "envVars", label: "Environment Variables", pathKey: null },
+            { key: "psProfile", label: "PowerShell 5 Profile", pathKey: "path" },
+            { key: "ps7profile", label: "PowerShell 7 Profile", pathKey: "path" },
+            { key: "gpg", label: "GPG Keys", pathKey: null },
+            { key: "windowsTerminal", label: "Windows Terminal Settings", pathKey: "path" },
+            { key: "claude", label: "Claude Code Config", pathKey: "path" },
+            { key: "npm", label: "npm Global Packages", pathKey: null },
+            { key: "copilot", label: "GitHub Copilot Config", pathKey: "path" },
+        ];
+
+        for (const def of itemDefs) {
+            const item = items[def.key];
+            if (!item) continue;
+
+            const label = createElement("label", { className: "sync-check-item" });
+            const checkbox = createElement("input", { type: "checkbox", name: "restore-item", value: def.key });
+            checkbox.checked = true;
+
+            const info = createElement("div", { className: "check-info" });
+            info.appendChild(createElement("div", { className: "check-label" }, [def.label]));
+
+            let detailText = "";
+            if (def.key === "ssh") detailText = `${item.fileCount} file(s) — public keys & config only`;
+            else if (def.key === "envVars") detailText = `${item.count} environment variable(s)`;
+            else if (def.key === "npm") detailText = `${item.count} global package(s)`;
+            else if (def.key === "gpg") detailText = `${item.keyCount} secret key(s)`;
+            else if (def.key === "claude") detailText = `${item.fileCount || 0} file(s) including skills`;
+            else if (def.key === "copilot") detailText = `${item.fileCount || 0} config file(s)`;
+            else if (item[def.pathKey]) detailText = `From: ${item[def.pathKey]}`;
+
+            info.appendChild(createElement("div", { className: "check-detail" }, [detailText]));
+            label.append(checkbox, info);
+            checklist.appendChild(label);
+        }
+
+        showToast("Backup decrypted! Select items to restore.", "success");
+
+    } catch (err) {
+        resultEl.textContent = "";
+        const card = createElement("div", { className: "result-card error" });
+        card.appendChild(createElement("h4", {}, ["✗ Restore Failed"]));
+        card.appendChild(createElement("pre", {}, [err.message]));
+        resultEl.appendChild(card);
+    }
 }
 
 // ── Tweaks (Windows Settings) ────────────────────────────────────────

@@ -706,6 +706,7 @@ def apply_restore(bundle: dict, selected: dict) -> dict:
                     result = subprocess.run(
                         ["npm", "install", "-g", pkg_spec],
                         capture_output=True, text=True, timeout=120,
+                        shell=True,
                     )
                     if result.returncode == 0:
                         applied += 1
