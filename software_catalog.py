@@ -51,6 +51,7 @@ SOFTWARE_CATALOG = [
     {"name": "VS Codium", "id": "VSCodium.VSCodium", "category": "Development", "description": "Open-source VS Code without telemetry", "link": "https://vscodium.com/", "icon": "", "match": ["vscodium", "codium"], "foss": True},
     {"name": "Cursor", "id": "Anysphere.Cursor", "category": "Development", "description": "AI-powered code editor", "link": "https://cursor.com/", "icon": "", "match": ["cursor"], "foss": False},
     {"name": "Zed", "id": "ZedIndustries.Zed", "category": "Development", "description": "High-performance code editor", "link": "https://zed.dev/", "icon": "", "match": ["zed"], "foss": True},
+    {"name": "Orca", "id": "StablyAI.Orca", "category": "Development", "description": "AI-powered code editor by Stably", "link": "https://orca.dev/", "icon": "", "match": ["orca"], "foss": False},
     {"name": "Neovim", "id": "Neovim.Neovim", "category": "Development", "description": "Hyperextensible Vim-based editor", "link": "https://neovim.io/", "icon": "", "match": ["neovim"], "foss": True},
     {"name": "Sublime Text", "id": "SublimeHQ.SublimeText.4", "category": "Development", "description": "Fast text editor", "link": "https://www.sublimetext.com/", "icon": "", "match": ["sublime text"], "foss": False},
     {"name": "Visual Studio 2022", "id": "Microsoft.VisualStudio.2022.Community", "category": "Development", "description": "Full-featured IDE", "link": "https://visualstudio.microsoft.com/", "icon": "", "match": ["visual studio community 2022", "visual studio 2022"], "foss": False},
