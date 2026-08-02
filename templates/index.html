@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WinTools Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">&#9881;</span>
+                    <span class="logo-text">WinTools</span>
+                </div>
+                <div class="version">v1.0.0</div>
+            </div>
+
+            <ul class="nav-tabs">
+                <li class="nav-tab active" data-tab="install-tab">
+                    <span class="tab-icon">&#128230;</span>
+                    <span class="tab-label">Install</span>
+                </li>
+                <li class="nav-tab" data-tab="system">
+                    <span class="tab-icon">&#128187;</span>
+                    <span class="tab-label">System</span>
+                </li>
+                <li class="nav-tab" data-tab="categories">
+                    <span class="tab-icon">&#128193;</span>
+                    <span class="tab-label">Categories</span>
+                </li>
+                <li class="nav-tab" data-tab="export">
+                    <span class="tab-icon">&#128190;</span>
+                    <span class="tab-label">Export</span>
+                </li>
+            </ul>
+
+            <div class="sidebar-footer">
+                <button id="btn-rescan" class="btn btn-accent" title="Rescan installed applications">
+                    &#8635; Rescan
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="content">
+            <!-- Install Tab (Software Catalog) -->
+            <section id="tab-install-tab" class="tab-content active">
+                <div class="tab-header">
+                    <h1>Install Software</h1>
+                    <p class="tab-desc">Curated catalog of popular apps + your installed apps (marked with ✓). Click any app to one-click install via winget.</p>
+                </div>
+                <div class="stats-bar">
+                    <div class="stat">
+                        <span class="stat-value" id="stat-catalog-total">&#8212;</span>
+                        <span class="stat-label">In Catalog</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="stat-catalog-installed">&#8212;</span>
+                        <span class="stat-label">Already On Your PC</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="stat-catalog-remaining">&#8212;</span>
+                        <span class="stat-label">Ready to Install</span>
+                    </div>
+                </div>
+                <div id="install-catalog" class="install-catalog">
+                    <div class="loading">Loading software catalog...</div>
+                </div>
+                <div class="foss-legend">
+                    <span class="dot">●</span> Free &amp; Open Source (FOSS)
+                </div>
+            </section>
+
+            <!-- System Tab -->
+            <section id="tab-system" class="tab-content">
+                <div class="tab-header">
+                    <h1>System Information</h1>
+                </div>
+                <div id="system-info" class="system-card">
+                    <div class="loading">Loading...</div>
+                </div>
+                <div id="disk-info" class="disk-cards"></div>
+            </section>
+
+            <!-- Categories Tab -->
+            <section id="tab-categories" class="tab-content">
+                <div class="tab-header">
+                    <h1>Categories Overview</h1>
+                </div>
+                <div class="category-grid" id="category-grid">
+                    <div class="loading">Loading...</div>
+                </div>
+            </section>
+
+            <!-- Export Tab -->
+            <section id="tab-export" class="tab-content">
+                <div class="tab-header">
+                    <h1>Export for Migration</h1>
+                    <p class="tab-desc">Select applications to export for reinstallation on your new SSD.</p>
+                </div>
+                <div id="export-content">
+                    <div class="loading">Loading...</div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
