@@ -722,10 +722,10 @@ async function loadSync() {
         const items = [
             {
                 key: "ssh",
-                label: "SSH Keys",
+                label: "SSH Config (public keys only)",
                 found: syncData.ssh?.found,
                 detail: syncData.ssh?.found
-                    ? `${syncData.ssh.keyCount} key(s) in ${syncData.ssh.dir}`
+                    ? `${syncData.ssh.keyCount} key(s) in ${syncData.ssh.dir} (public keys & config only — private keys excluded)`
                     : "No SSH keys found",
                 count: syncData.ssh?.keyCount || 0,
             },
@@ -748,11 +748,19 @@ async function loadSync() {
             },
             {
                 key: "psProfile",
-                label: "PowerShell Profile",
+                label: "PowerShell 5 Profile",
                 found: syncData.psProfile?.found,
                 detail: syncData.psProfile?.found
                     ? `Found: ${syncData.psProfile.path}`
-                    : "No PowerShell profile found",
+                    : "No PowerShell 5 profile found",
+            },
+            {
+                key: "ps7profile",
+                label: "PowerShell 7 Profile",
+                found: syncData.ps7profile?.found,
+                detail: syncData.ps7profile?.found
+                    ? `Found: ${syncData.ps7profile.path}`
+                    : "No PowerShell 7 profile found",
             },
             {
                 key: "gpg",
@@ -771,6 +779,33 @@ async function loadSync() {
                 detail: syncData.windowsTerminal?.found
                     ? `Found: ${syncData.windowsTerminal.path}`
                     : "Windows Terminal settings not found",
+            },
+            {
+                key: "claude",
+                label: "Claude Code Config",
+                found: syncData.claude?.found,
+                detail: syncData.claude?.found
+                    ? `${syncData.claude.skills} skill(s) + settings`
+                    : "No Claude Code config found",
+                count: syncData.claude?.skills || 0,
+            },
+            {
+                key: "npm",
+                label: "npm Global Packages",
+                found: syncData.npm?.found,
+                detail: syncData.npm?.found
+                    ? `${syncData.npm.count} global package(s)`
+                    : "No npm global packages found",
+                count: syncData.npm?.count || 0,
+            },
+            {
+                key: "copilot",
+                label: "GitHub Copilot Config",
+                found: syncData.copilot?.found,
+                detail: syncData.copilot?.found
+                    ? `${Object.keys(syncData.copilot.files || {}).length} config file(s)`
+                    : "No GitHub Copilot config found",
+                count: syncData.copilot?.files ? Object.keys(syncData.copilot.files).length : 0,
             },
         ];
 

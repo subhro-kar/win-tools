@@ -1,6 +1,7 @@
 """
 WinTools - Migration module for encrypted backup & restore via Cloudflare R2.
-Handles: SSH keys, GPG keys, Git config, env vars, PowerShell profile.
+Handles: SSH config (no private keys), GPG keys, Git config, env vars,
+PowerShell profiles, Windows Terminal, Claude Code, npm globals, GitHub Copilot.
 Uses Fernet symmetric encryption and boto3 S3 for R2 uploads.
 """
 
@@ -105,6 +106,19 @@ def get_secrets_summary() -> dict:
     wt_path = _get_terminal_settings_path()
     summary["windowsTerminal"] = {"found": wt_path.exists() if wt_path else False, "path": str(wt_path) if wt_path else ""}
 
+    # Claude Code configuration
+    summary["claude"] = _scan_claude_code()
+
+    # npm global packages
+    summary["npm"] = _scan_npm_globals()
+
+    # GitHub Copilot CLI configuration
+    summary["copilot"] = _scan_copilot()
+
+    # PowerShell 7 profile (separate from PS 5.1 profile)
+    ps7_path = _get_ps7_profile_path()
+    summary["ps7profile"] = {"found": ps7_path.exists(), "path": str(ps7_path)}
+
     return summary
 
 
@@ -172,6 +186,115 @@ def _get_terminal_settings_path() -> Path:
     return None
 
 
+def _scan_claude_code() -> dict:
+    """Scan Claude Code configuration."""
+    claude_dir = Path.home() / ".claude"
+    settings_path = claude_dir / "settings.json"
+    if not settings_path.exists():
+        return {"found": False, "skills": 0, "hasClaudeMd": False}
+
+    skills_dir = claude_dir / "skills"
+    skill_count = len(list(skills_dir.iterdir())) if skills_dir.is_dir() else 0
+    has_claude_md = (claude_dir / "CLAUDE.md").exists()
+    has_local_settings = (claude_dir / "settings.local.json").exists()
+
+    return {
+        "found": True,
+        "path": str(claude_dir),
+        "skills": skill_count,
+        "hasClaudeMd": has_claude_md,
+        "hasLocalSettings": has_local_settings,
+    }
+
+
+def _scan_npm_globals() -> dict:
+    """Scan npm globally installed packages."""
+    import shutil
+
+    # Find npm executable (may be via nvm4w or in PATH)
+    npm_path = shutil.which("npm")
+    if not npm_path:
+        # Try common nvm4w locations
+        nvm_node = Path(os.environ.get("NVM_HOME", "")) / "nodejs" / "npm.cmd"
+        if nvm_node.exists():
+            npm_path = str(nvm_node)
+        else:
+            # Try the nodejs path directly
+            for candidate in [r"C:\nvm4w\nodejs\npm.cmd", r"C:\Program Files\nodejs\npm.cmd"]:
+                if Path(candidate).exists():
+                    npm_path = candidate
+                    break
+
+    if not npm_path:
+        return {"found": False, "count": 0, "packages": []}
+
+    # Use shell=True on Windows for .cmd files
+    try:
+        result = subprocess.run(
+            [npm_path, "list", "-g", "--depth=0", "--json"],
+            capture_output=True, text=True, timeout=30, shell=True,
+        )
+        if result.stdout and result.stdout.strip():
+            # npm sometimes outputs warnings on stderr before the JSON
+            stdout = result.stdout.strip()
+            # Find the start of JSON
+            json_start = stdout.find("{")
+            if json_start >= 0:
+                data = json.loads(stdout[json_start:])
+                deps = data.get("dependencies", {})
+                packages = []
+                for name, info in deps.items():
+                    version = info.get("version", "unknown")
+                    packages.append({"name": name, "version": version})
+                return {"found": True, "count": len(packages), "packages": packages}
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+        pass
+
+    return {"found": False, "count": 0, "packages": []}
+
+
+def _scan_copilot() -> dict:
+    """Scan GitHub Copilot CLI configuration."""
+    copilot_dir = Path.home() / ".copilot"
+    config_path = copilot_dir / "config.json"
+    if not config_path.exists():
+        return {"found": False}
+
+    files = {}
+    for name in ["config.json", "settings.json", "mcp-config.json", "permissions-config.json"]:
+        f = copilot_dir / name
+        if f.exists():
+            files[name] = f.stat().st_size
+
+    return {"found": True, "path": str(copilot_dir), "files": files}
+
+
+def _get_ps7_profile_path() -> Path:
+    """Get PowerShell 7 (pwsh) profile path."""
+    # Try pwsh first
+    try:
+        result = subprocess.run(
+            ["pwsh", "-NoProfile", "-Command", "$PROFILE"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            path = Path(result.stdout.strip())
+            if path.exists() or path.parent.exists():
+                return path
+    except FileNotFoundError:
+        pass
+
+    # Fallback: standard pwsh profile location
+    profile = Path.home() / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+    # Also check OneDrive location
+    onedrive_profile = Path.home() / "OneDrive" / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+    if onedrive_profile.exists():
+        return onedrive_profile
+    if profile.exists():
+        return profile
+    return profile
+
+
 # ── Bundling ──────────────────────────────────────────────────────
 
 
@@ -188,20 +311,48 @@ def create_bundle(selected_items: dict, key: bytes) -> tuple:
     manifest = {"version": "1.0", "items": {}, "files": {}}
     bundle_files = {}
 
-    # ── SSH Keys ──
+    # ── SSH Config (no private keys) ──
     if selected_items.get("ssh"):
         ssh_dir = Path.home() / ".ssh"
         if ssh_dir.exists():
             ssh_files = {}
+            # Get list of .pub files to identify keypairs
+            pub_files = set()
             for f in ssh_dir.iterdir():
-                if f.is_file() and not f.name.endswith(".old"):
-                    try:
-                        content = f.read_bytes()
-                        rel_path = str(f.relative_to(Path.home()))
-                        bundle_files[rel_path] = content
-                        ssh_files[f.name] = {"size": len(content), "relative": rel_path}
-                    except (PermissionError, OSError):
-                        pass
+                if f.is_file() and f.name.endswith(".pub"):
+                    pub_files.add(f.name[:-4])  # e.g., "id_rsa" from "id_rsa.pub"
+
+            # Private key patterns to EXCLUDE for security
+            # Exclude: .pem, .key, .old, files that have a .pub counterpart (private keypairs)
+            # Exclude: files starting with id_ that don't end with .pub
+            for f in ssh_dir.iterdir():
+                if not f.is_file():
+                    continue
+                name = f.name
+                # Skip .old backups
+                if name.endswith(".old"):
+                    continue
+                # Skip .pem and .key (private key files)
+                if name.endswith(".pem") or name.endswith(".key"):
+                    continue
+                # Skip 1Password directory reference
+                if name == "1Password" or name == "1Password":
+                    continue
+                # Skip private keypair files: if this filename has a .pub sibling,
+                # this file is the private key — exclude it
+                if name in pub_files:
+                    continue
+                # Skip id_* files that don't end with .pub (private keys)
+                if name.startswith("id_") and not name.endswith(".pub"):
+                    continue
+                # Allowed: config, known_hosts, *.pub, authorized_keys, *.txt
+                try:
+                    content = f.read_bytes()
+                    rel_path = str(f.relative_to(Path.home()))
+                    bundle_files[rel_path] = content
+                    ssh_files[f.name] = {"size": len(content), "relative": rel_path}
+                except (PermissionError, OSError):
+                    pass
             manifest["items"]["ssh"] = {"dir": str(ssh_dir), "fileCount": len(ssh_files), "files": ssh_files}
 
     # ── Git Config ──
@@ -248,6 +399,65 @@ def create_bundle(selected_items: dict, key: bytes) -> tuple:
             content = wt_path.read_bytes()
             bundle_files["terminal-settings.json"] = content
             manifest["items"]["windowsTerminal"] = {"path": str(wt_path), "size": len(content)}
+
+    # ── Claude Code Configuration ──
+    if selected_items.get("claude"):
+        claude_dir = Path.home() / ".claude"
+        claude_files = {}
+        for name in ["settings.json", "settings.local.json", "CLAUDE.md"]:
+            f = claude_dir / name
+            if f.exists():
+                try:
+                    content = f.read_bytes()
+                    bundle_files[f"claude/{name}"] = content
+                    claude_files[name] = {"size": len(content)}
+                except (PermissionError, OSError):
+                    pass
+        # Include skills directory
+        skills_dir = claude_dir / "skills"
+        if skills_dir.is_dir():
+            for skill_file in skills_dir.iterdir():
+                if skill_file.is_file():
+                    try:
+                        content = skill_file.read_bytes()
+                        bundle_files[f"claude/skills/{skill_file.name}"] = content
+                        claude_files[f"skills/{skill_file.name}"] = {"size": len(content)}
+                    except (PermissionError, OSError):
+                        pass
+        if claude_files:
+            manifest["items"]["claude"] = {"path": str(claude_dir), "fileCount": len(claude_files), "files": claude_files}
+
+    # ── npm Global Packages ──
+    if selected_items.get("npm"):
+        npm_info = _scan_npm_globals()
+        if npm_info.get("found"):
+            npm_data = json.dumps({"packages": npm_info["packages"]}, indent=2).encode("utf-8")
+            bundle_files["npm-globals.json"] = npm_data
+            manifest["items"]["npm"] = {"count": npm_info["count"]}
+
+    # ── GitHub Copilot Configuration ──
+    if selected_items.get("copilot"):
+        copilot_dir = Path.home() / ".copilot"
+        copilot_files = {}
+        for name in ["config.json", "settings.json", "mcp-config.json", "permissions-config.json"]:
+            f = copilot_dir / name
+            if f.exists():
+                try:
+                    content = f.read_bytes()
+                    bundle_files[f"copilot/{name}"] = content
+                    copilot_files[name] = {"size": len(content)}
+                except (PermissionError, OSError):
+                    pass
+        if copilot_files:
+            manifest["items"]["copilot"] = {"path": str(copilot_dir), "fileCount": len(copilot_files), "files": copilot_files}
+
+    # ── PowerShell 7 Profile ──
+    if selected_items.get("ps7profile"):
+        ps7_path = _get_ps7_profile_path()
+        if ps7_path and ps7_path.exists():
+            content = ps7_path.read_bytes()
+            bundle_files["Microsoft.PowerShell7_profile.ps1"] = content
+            manifest["items"]["ps7profile"] = {"path": str(ps7_path), "size": len(content)}
 
     # Create ZIP in memory
     zip_buffer = io.BytesIO()
@@ -382,20 +592,18 @@ def apply_restore(bundle: dict, selected: dict) -> dict:
     files = bundle["files"]
     home = Path.home()
 
-    # ── SSH Keys ──
+    # ── SSH Config (safe files only) ──
     if selected.get("ssh") and "ssh" in manifest.get("items", {}):
         ssh_dir = home / ".ssh"
         ssh_dir.mkdir(exist_ok=True)
         applied = 0
         for name, data in files.items():
-            if name.startswith(".ssh/") or (not name.startswith("env-vars") and not name.startswith("gpg")
-                                            and not name.startswith("manifest") and not name.startswith("Microsoft")
-                                            and not name.startswith("terminal") and not name.startswith(".gitconfig")):
+            if name.startswith(".ssh/"):
                 target = ssh_dir / Path(name).name
                 try:
                     target.write_bytes(data)
                     applied += 1
-                except Exception as e:
+                except Exception:
                     pass
         results["ssh"] = {"applied": applied, "dir": str(ssh_dir)}
 
@@ -463,6 +671,77 @@ def apply_restore(bundle: dict, selected: dict) -> dict:
                 results["windowsTerminal"] = {"applied": True, "path": str(wt_path)}
             except Exception as e:
                 results["windowsTerminal"] = {"applied": False, "error": str(e)}
+
+    # ── Claude Code Configuration ──
+    if selected.get("claude") and "claude" in manifest.get("items", {}):
+        claude_dir = home / ".claude"
+        claude_dir.mkdir(exist_ok=True)
+        applied = 0
+        for name, data in files.items():
+            if name.startswith("claude/"):
+                rel = name[len("claude/"):]
+                target = claude_dir / rel
+                try:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(data)
+                    applied += 1
+                except Exception:
+                    pass
+        results["claude"] = {"applied": applied, "dir": str(claude_dir)}
+
+    # ── npm Global Packages ──
+    if selected.get("npm") and "npm-globals.json" in files:
+        try:
+            npm_data = json.loads(files["npm-globals.json"].decode("utf-8"))
+            packages = npm_data.get("packages", [])
+            applied = 0
+            failed = 0
+            for pkg in packages:
+                name = pkg.get("name", "")
+                version = pkg.get("version", "")
+                if not name:
+                    continue
+                pkg_spec = f"{name}@{version}" if version else name
+                try:
+                    result = subprocess.run(
+                        ["npm", "install", "-g", pkg_spec],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    if result.returncode == 0:
+                        applied += 1
+                    else:
+                        failed += 1
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    failed += 1
+            results["npm"] = {"applied": applied, "failed": failed, "total": len(packages)}
+        except Exception as e:
+            results["npm"] = {"applied": False, "error": str(e)}
+
+    # ── GitHub Copilot Configuration ──
+    if selected.get("copilot") and "copilot" in manifest.get("items", {}):
+        copilot_dir = home / ".copilot"
+        copilot_dir.mkdir(exist_ok=True)
+        applied = 0
+        for name, data in files.items():
+            if name.startswith("copilot/"):
+                rel = name[len("copilot/"):]
+                target = copilot_dir / rel
+                try:
+                    target.write_bytes(data)
+                    applied += 1
+                except Exception:
+                    pass
+        results["copilot"] = {"applied": applied, "dir": str(copilot_dir)}
+
+    # ── PowerShell 7 Profile ──
+    if selected.get("ps7profile") and "Microsoft.PowerShell7_profile.ps1" in files:
+        ps7_path = _get_ps7_profile_path()
+        try:
+            ps7_path.parent.mkdir(parents=True, exist_ok=True)
+            ps7_path.write_bytes(files["Microsoft.PowerShell7_profile.ps1"])
+            results["ps7profile"] = {"applied": True, "path": str(ps7_path)}
+        except Exception as e:
+            results["ps7profile"] = {"applied": False, "error": str(e)}
 
     return results
 
