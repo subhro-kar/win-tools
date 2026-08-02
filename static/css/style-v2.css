@@ -1470,11 +1470,150 @@ body {
     margin-bottom: 20px;
     flex-wrap: wrap;
     align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-primary);
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
 }
 
 .tweaks-actions .btn {
     padding: 8px 16px;
     font-size: 13px;
+}
+
+.tweaks-actions .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.tweak-count-badge {
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 12px;
+    padding: 2px 10px;
+    min-width: 24px;
+    text-align: center;
+    line-height: 20px;
+}
+
+/* Confirmation Modal */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(3px);
+}
+
+.modal-content {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg, 12px);
+    max-width: 520px;
+    width: 92%;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+    padding: 18px 22px 12px;
+    border-bottom: 1px solid var(--border);
+}
+.modal-header h3 { margin: 0; font-size: 17px; }
+
+.modal-body {
+    padding: 16px 22px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.modal-footer {
+    padding: 14px 22px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+.confirm-group { margin-bottom: 14px; }
+.confirm-group-label {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+.confirm-group.confirm-safe .confirm-group-label { color: var(--green); }
+.confirm-group.confirm-moderate .confirm-group-label { color: var(--orange); }
+.confirm-group.confirm-risky .confirm-group-label { color: var(--red); }
+
+.confirm-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-left: 10px;
+}
+.confirm-item {
+    font-size: 13px;
+    padding: 3px 0;
+    color: var(--text);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.confirm-item-name {
+    flex: 1;
+}
+
+.confirm-item-state {
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.confirm-state-on {
+    background: rgba(46, 204, 113, 0.15);
+    color: var(--green, #2ecc71);
+}
+
+.confirm-state-off {
+    background: rgba(52, 152, 219, 0.15);
+    color: #3498db;
+}
+
+.confirm-state-unknown {
+    background: rgba(149, 165, 166, 0.15);
+    color: #95a5a6;
+}
+.confirm-item-warning {
+    font-size: 11px;
+    color: var(--red);
+    font-style: italic;
+    margin-top: 1px;
+}
+
+.confirm-admin-note {
+    background: var(--orange-bg, rgba(255,165,0,0.1));
+    border: 1px solid var(--orange);
+    border-radius: var(--radius-sm, 6px);
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--orange);
+    margin-top: 10px;
 }
 
 .tweaks-content {
@@ -1550,6 +1689,60 @@ body {
 
 .tweak-card.script-only {
     border-style: dashed;
+}
+
+.tweak-card.risk-safe {
+    border-left: 3px solid var(--green);
+}
+
+.tweak-card.risk-moderate {
+    border-left: 3px solid var(--orange);
+}
+
+.tweak-card.risk-risky {
+    border-left: 3px solid var(--red);
+}
+
+.badge-risk-safe {
+    background: var(--green-bg);
+    color: var(--green);
+    border: 1px solid var(--green);
+}
+
+.badge-risk-moderate {
+    background: var(--orange-bg);
+    color: var(--orange);
+    border: 1px solid var(--orange);
+}
+
+.badge-risk-risky {
+    background: var(--red-bg);
+    color: var(--red);
+    border: 1px solid var(--red);
+    font-weight: 700;
+}
+
+.tweak-warning {
+    font-size: 11px;
+    color: var(--orange);
+    margin-top: 4px;
+    line-height: 1.4;
+    font-style: italic;
+}
+
+.tweak-card.risk-risky .tweak-warning {
+    color: var(--red);
+}
+
+.tweak-admin-banner {
+    background: var(--orange-bg);
+    border: 1px solid var(--orange);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    color: var(--orange);
+    font-size: 13px;
+    line-height: 1.5;
 }
 
 .tweak-top {

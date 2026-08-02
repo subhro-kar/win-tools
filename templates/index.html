@@ -240,8 +240,9 @@
                     <p class="tab-desc">Customize Windows settings. Toggle changes and apply them with one click.</p>
                 </div>
                 <div class="tweaks-actions">
-                    <button class="btn btn-accent" id="btn-tweaks-apply" onclick="applySelectedTweaks()">Apply Selected</button>
-                    <button class="btn btn-orange" id="btn-tweaks-revert" onclick="revertSelectedTweaks()">Revert Selected</button>
+                    <button class="btn btn-accent" id="btn-tweaks-apply" onclick="applySelectedTweaks()" disabled>Apply Selected</button>
+                    <button class="btn btn-orange" id="btn-tweaks-revert" onclick="revertSelectedTweaks()" disabled>Revert Selected</button>
+                    <span id="tweak-count-badge" class="tweak-count-badge" style="display:none;"></span>
                     <button class="btn" onclick="selectAllTweaks(true)">Select All</button>
                     <button class="btn" onclick="selectAllTweaks(false)">Deselect All</button>
                     <button class="btn" onclick="loadTweaks()">&#8635; Rescan</button>

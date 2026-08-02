@@ -663,10 +663,21 @@ def api_tweaks():
                 "recommended": tweak.get("recommended", "off"),
                 "requires_admin": tweak.get("requires_admin", False),
                 "script_only": tweak.get("script_only", False),
+                "risk": tweak.get("risk", "safe"),
+                "warning": tweak.get("warning", ""),
                 "current_state": state.get("is_on"),
                 "current_value": state.get("current_value"),
             }
             result[cat_name]["tweaks"].append(entry)
+
+    # Check if running as admin
+    try:
+        import ctypes
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        is_admin = False
+
+    result["_meta"] = {"is_admin": is_admin}
     return jsonify(result)
 
 

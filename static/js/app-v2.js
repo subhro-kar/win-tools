@@ -95,7 +95,13 @@ function switchTab(tabId) {
     if (tabId === "categories") loadCategories();
     if (tabId === "export") loadExport();
     if (tabId === "sync") loadSync();
-    if (tabId === "tweaks") loadTweaks();
+    if (tabId === "tweaks") {
+        if (tweaksData) {
+            renderTweaks(tweaksData, tweaksIsElevated);
+        } else {
+            loadTweaks();
+        }
+    }
 }
 
 // ── Toast Notifications ─────────────────────────────────────────
@@ -1480,6 +1486,7 @@ async function applyRestore() {
 // ── Tweaks (Windows Settings) ────────────────────────────────────────
 
 let tweaksData = null;
+let tweaksIsElevated = false;
 
 async function loadTweaks() {
     const el = document.getElementById("tweaks-content");
@@ -1489,23 +1496,39 @@ async function loadTweaks() {
 
     try {
         const res = await fetch(`${API}/tweaks`);
-        tweaksData = await res.json();
-        renderTweaks(tweaksData);
+        const rawData = await res.json();
+
+        // Extract admin status from meta
+        const isElevated = rawData._meta && rawData._meta.is_admin;
+        delete rawData._meta;
+
+        tweaksData = rawData;
+        tweaksIsElevated = isElevated;
+        renderTweaks(tweaksData, isElevated);
     } catch (err) {
         el.textContent = "";
         el.appendChild(createElement("div", { className: "loading" }, [`Error: ${err.message}`]));
     }
 }
 
-function renderTweaks(data) {
+function renderTweaks(data, isElevated) {
     const el = document.getElementById("tweaks-content");
     el.textContent = "";
+
+    // Show admin warning if not elevated
+    if (!isElevated) {
+        const banner = createElement("div", { className: "tweak-admin-banner" }, [
+            "⚠️ Not running as Administrator — HKLM tweaks and service changes will fail. Right-click WinTools and select \"Run as Administrator\" for full access."
+        ]);
+        el.appendChild(banner);
+    }
 
     const categoryIcons = {
         "Personalization": "🎨",
         "Privacy & Telemetry": "🔒",
         "Performance & Power": "⚡",
-        "Security & Updates": "🛡️",
+        "Security": "🛡️",
+        "Hardening": "⚔️",
     };
 
     for (const [catName, catData] of Object.entries(data)) {
@@ -1530,8 +1553,9 @@ function renderTweaks(data) {
         const grid = createElement("div", { className: "tweak-grid" });
 
         for (const tweak of catData.tweaks) {
+            const riskClass = tweak.risk || "safe";
             const card = createElement("div", {
-                className: `tweak-card${tweak.current_state === true ? " active" : ""}${tweak.script_only ? " script-only" : ""}`,
+                className: `tweak-card${tweak.current_state === true ? " active" : ""}${tweak.script_only ? " script-only" : ""} risk-${riskClass}`,
             });
 
             // Checkbox + info row
@@ -1542,8 +1566,12 @@ function renderTweaks(data) {
                 id: `tweak-${tweak.id}`,
                 value: tweak.id,
             });
+            checkbox.addEventListener("change", updateTweakCount);
             checkbox.dataset.requiresAdmin = tweak.requires_admin ? "1" : "0";
             checkbox.dataset.scriptOnly = tweak.script_only ? "1" : "0";
+            checkbox.dataset.risk = riskClass;
+            if (tweak.warning) checkbox.dataset.warning = tweak.warning;
+            checkbox.dataset.currentState = tweak.current_state === true ? "on" : tweak.current_state === false ? "off" : "unknown";
 
             const info = createElement("div", { className: "tweak-info" });
             const nameRow = createElement("div", { className: "tweak-name-row" });
@@ -1554,6 +1582,10 @@ function renderTweaks(data) {
             if (tweak.recommended === "on") {
                 badges.appendChild(createElement("span", { className: "badge badge-recommended" }, ["Recommended"]));
             }
+            // Risk badge
+            const riskLabels = { safe: "Safe", moderate: "Moderate", risky: "Risky" };
+            const riskEmojis = { safe: "✅", moderate: "⚠️", risky: "🔴" };
+            badges.appendChild(createElement("span", { className: `badge badge-risk-${riskClass}` }, [`${riskEmojis[riskClass] || ""} ${riskLabels[riskClass] || "Safe"}`]));
             if (tweak.requires_admin) {
                 badges.appendChild(createElement("span", { className: "badge badge-admin" }, ["Admin"]));
             }
@@ -1566,16 +1598,26 @@ function renderTweaks(data) {
             const desc = createElement("div", { className: "tweak-desc" }, [tweak.description]);
             info.appendChild(desc);
 
+            // Warning text
+            if (tweak.warning) {
+                const warningEl = createElement("div", { className: "tweak-warning" }, [tweak.warning]);
+                info.appendChild(warningEl);
+            }
+
             // Current state indicator
             const stateRow = createElement("div", { className: "tweak-state" });
             if (tweak.current_state === true) {
                 stateRow.appendChild(createElement("span", { className: "state-on" }, ["✓ Enabled"]));
             } else if (tweak.current_state === false) {
                 stateRow.appendChild(createElement("span", { className: "state-off" }, ["✗ Disabled"]));
+            } else if (tweak.current_value === "need_admin") {
+                stateRow.appendChild(createElement("span", { className: "state-unknown" }, ["🔒 Needs Admin to detect"]));
+            } else if (tweak.current_value === "script_only") {
+                stateRow.appendChild(createElement("span", { className: "state-unknown" }, ["📜 Script only — apply to enable"]));
             } else {
-                stateRow.appendChild(createElement("span", { className: "state-unknown" }, ["? Unknown"]));
+                stateRow.appendChild(createElement("span", { className: "state-unknown" }, ["Not set (default)"]));
             }
-            if (tweak.current_value !== null && tweak.current_value !== undefined) {
+            if (tweak.current_value !== null && tweak.current_value !== undefined && tweak.current_value !== "need_admin" && tweak.current_value !== "script_only") {
                 stateRow.appendChild(createElement("span", { className: "state-value" }, [` (current: ${tweak.current_value})`]));
             }
             info.appendChild(stateRow);
@@ -1588,6 +1630,21 @@ function renderTweaks(data) {
         section.appendChild(grid);
         el.appendChild(section);
     }
+
+    updateTweakCount();
+}
+
+function updateTweakCount() {
+    const count = getSelectedTweakIds().length;
+    const badge = document.getElementById("tweak-count-badge");
+    const applyBtn = document.getElementById("btn-tweaks-apply");
+    const revertBtn = document.getElementById("btn-tweaks-revert");
+    if (badge) {
+        badge.textContent = count > 0 ? count : "";
+        badge.style.display = count > 0 ? "inline-flex" : "none";
+    }
+    if (applyBtn) applyBtn.disabled = count === 0;
+    if (revertBtn) revertBtn.disabled = count === 0;
 }
 
 async function applySelectedTweaks() {
@@ -1600,16 +1657,131 @@ async function applySelectedTweaks() {
         return;
     }
 
-    // Warn about admin tweaks
+    // Build confirmation modal with all selected tweaks
+    const tweaks = selected.map(id => {
+        const cb = document.querySelector(`input[value="${id}"]`);
+        if (!cb) return null;
+        const card = cb.closest(".tweak-card");
+        const name = card ? card.querySelector(".tweak-name").textContent : id;
+        const risk = cb.dataset.risk || "safe";
+        const warning = cb.dataset.warning || "";
+        const currentState = cb.dataset.currentState || "unknown";
+        return { id, name, risk, warning, currentState };
+    }).filter(Boolean);
+
+    const safeTweaks = tweaks.filter(t => t.risk === "safe");
+    const moderateTweaks = tweaks.filter(t => t.risk === "moderate");
+    const riskyTweaks = tweaks.filter(t => t.risk === "risky");
+
+    // Show confirmation modal
+    const overlay = createElement("div", { className: "modal-overlay" });
+    const modal = createElement("div", { className: "modal-content tweak-confirm-modal" });
+    const header = createElement("div", { className: "modal-header" }, [
+        createElement("h3", {}, [`Apply ${selected.length} Tweak(s)`]),
+    ]);
+
+    const body = createElement("div", { className: "modal-body" });
+
+    // Risk group sections
+    const groups = [
+        { label: "🔴 Risky", items: riskyTweaks, cls: "confirm-risky" },
+        { label: "⚠️ Moderate", items: moderateTweaks, cls: "confirm-moderate" },
+        { label: "✅ Safe", items: safeTweaks, cls: "confirm-safe" },
+    ];
+    for (const g of groups) {
+        if (g.items.length === 0) continue;
+        const section = createElement("div", { className: `confirm-group ${g.cls}` });
+        section.appendChild(createElement("div", { className: "confirm-group-label" }, [`${g.label} (${g.items.length})`]));
+        const list = createElement("div", { className: "confirm-list" });
+        for (const t of g.items) {
+            const item = createElement("div", { className: "confirm-item" });
+            const stateLabel = t.currentState === "on" ? "✓ Already on"
+                             : t.currentState === "off" ? "→ Will enable"
+                             : "? Not set";
+            const stateClass = t.currentState === "on" ? "confirm-state-on"
+                             : t.currentState === "off" ? "confirm-state-off"
+                             : "confirm-state-unknown";
+            item.appendChild(createElement("span", { className: `confirm-item-name` }, [t.name]));
+            item.appendChild(createElement("span", { className: `confirm-item-state ${stateClass}` }, [stateLabel]));
+            if (t.warning) {
+                const warn = createElement("div", { className: "confirm-item-warning" }, [t.warning]);
+                item.appendChild(warn);
+            }
+            list.appendChild(item);
+        }
+        section.appendChild(list);
+        body.appendChild(section);
+    }
+
+    // Admin note
     const adminTweaks = selected.filter(id => {
         const cb = document.querySelector(`input[value="${id}"]`);
         return cb && cb.dataset.requiresAdmin === "1";
     });
     if (adminTweaks.length > 0) {
-        // Check if we might be running as admin (not easy to check from browser)
-        // Just show a note
-        showToast(`${adminTweaks.length} tweak(s) require admin rights. If they fail, run WinTools as Administrator.`, "info");
+        body.appendChild(createElement("div", { className: "confirm-admin-note" }, [
+            `🔒 ${adminTweaks.length} tweak(s) require admin rights — may fail without elevation.`,
+        ]));
     }
+
+    const footer = createElement("div", { className: "modal-footer" });
+    const cancelBtn = createElement("button", { className: "btn" }, ["Cancel"]);
+    cancelBtn.addEventListener("click", () => { overlay.remove(); });
+    const applyBtn2 = createElement("button", { className: "btn btn-accent" }, ["✓ Apply"]);
+    applyBtn2.addEventListener("click", () => {
+        overlay.remove();
+        doApplyTweaks(btn, resultEl, selected);
+    });
+    footer.append(cancelBtn, applyBtn2);
+
+    modal.append(header, body, footer);
+    overlay.appendChild(modal);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
+async function doApplyTweaks(btn, resultEl, selected) {
+    btn.disabled = true;
+    btn.textContent = "Applying...";
+    resultEl.textContent = "";
+
+    try {
+        const res = await fetch(`${API}/tweaks/apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tweaks: selected, action: "apply" }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            const card = createElement("div", { className: "tweak-result-card success" });
+            card.appendChild(createElement("h4", {}, [`✓ Applied ${data.applied} tweak(s)`]));
+            if (data.failed > 0) {
+                card.appendChild(createElement("p", { style: "color:var(--orange);margin-top:4px;" }, [
+                    `${data.failed} tweak(s) failed — may require admin rights or restart`
+                ]));
+            }
+            const details = createElement("div", { className: "tweak-result-details" });
+            for (const [id, result] of Object.entries(data.results)) {
+                const item = createElement("div", { className: `tweak-result-item${result.success ? "" : " failed"}` });
+                item.textContent = `${id}: ${result.success ? "✓ " + (result.message || "Applied") : "✗ " + (result.error || "Failed")}`;
+                details.appendChild(item);
+            }
+            card.appendChild(details);
+            resultEl.textContent = "";
+            resultEl.appendChild(card);
+            showToast(`Applied ${data.applied} tweak(s)!`, "success");
+            setTimeout(() => loadTweaks(), 2000);
+        } else {
+            showToast(`Error: ${data.error || "Unknown error"}`, "error");
+        }
+    } catch (err) {
+        showToast(`Error: ${err.message}`, "error");
+    }
+
+    btn.disabled = false;
+    btn.textContent = "Apply Selected";
+    updateTweakCount();
 
     btn.disabled = true;
     btn.textContent = "Applying...";
@@ -1642,9 +1814,7 @@ async function applySelectedTweaks() {
             resultEl.textContent = "";
             resultEl.appendChild(card);
             showToast(`Applied ${data.applied} tweak(s)!`, "success");
-
-            // Refresh state
-            setTimeout(() => loadTweaks(), 1000);
+            setTimeout(() => loadTweaks(), 2000);
         } else {
             showToast(`Error: ${data.error || "Unknown error"}`, "error");
         }
@@ -1654,18 +1824,71 @@ async function applySelectedTweaks() {
 
     btn.disabled = false;
     btn.textContent = "Apply Selected";
+    updateTweakCount();
 }
 
 async function revertSelectedTweaks() {
-    const btn = document.getElementById("btn-tweaks-revert");
-    const resultEl = document.getElementById("tweaks-result");
     const selected = getSelectedTweakIds();
-
     if (selected.length === 0) {
         showToast("Select at least one tweak to revert", "info");
         return;
     }
 
+    // Build confirmation modal
+    const tweaks = selected.map(id => {
+        const cb = document.querySelector(`input[value="${id}"]`);
+        if (!cb) return null;
+        const card = cb.closest(".tweak-card");
+        const name = card ? card.querySelector(".tweak-name").textContent : id;
+        const currentState = cb.dataset.currentState || "unknown";
+        return { id, name, currentState };
+    }).filter(Boolean);
+
+    const overlay = createElement("div", { className: "modal-overlay" });
+    const modal = createElement("div", { className: "modal-content tweak-confirm-modal" });
+    const header = createElement("div", { className: "modal-header" }, [
+        createElement("h3", {}, [`↩ Revert ${selected.length} Tweak(s)`]),
+    ]);
+
+    const body = createElement("div", { className: "modal-body" });
+    const note = createElement("div", { className: "confirm-admin-note" }, [
+        "This will restore each selected tweak to its Windows default state.",
+    ]);
+    body.appendChild(note);
+    const list = createElement("div", { className: "confirm-list" });
+    for (const t of tweaks) {
+        const item = createElement("div", { className: "confirm-item" });
+        const stateLabel = t.currentState === "on" ? "↩ Will disable"
+                         : t.currentState === "off" ? "✓ Already off"
+                         : "? Unknown";
+        const stateClass = t.currentState === "on" ? "confirm-state-off"
+                         : t.currentState === "off" ? "confirm-state-on"
+                         : "confirm-state-unknown";
+        item.appendChild(createElement("span", { className: "confirm-item-name" }, [t.name]));
+        item.appendChild(createElement("span", { className: `confirm-item-state ${stateClass}` }, [stateLabel]));
+        list.appendChild(item);
+    }
+    body.appendChild(list);
+
+    const footer = createElement("div", { className: "modal-footer" });
+    const cancelBtn = createElement("button", { className: "btn" }, ["Cancel"]);
+    cancelBtn.addEventListener("click", () => { overlay.remove(); });
+    const revertBtn = createElement("button", { className: "btn btn-orange" }, ["↩ Revert"]);
+    revertBtn.addEventListener("click", () => {
+        overlay.remove();
+        doRevertTweaks(selected);
+    });
+    footer.append(cancelBtn, revertBtn);
+
+    modal.append(header, body, footer);
+    overlay.appendChild(modal);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
+async function doRevertTweaks(selected) {
+    const btn = document.getElementById("btn-tweaks-revert");
+    const resultEl = document.getElementById("tweaks-result");
     btn.disabled = true;
     btn.textContent = "Reverting...";
     resultEl.textContent = "";
@@ -1693,8 +1916,7 @@ async function revertSelectedTweaks() {
             resultEl.textContent = "";
             resultEl.appendChild(card);
             showToast(`Reverted ${data.applied} tweak(s)!`, "success");
-
-            setTimeout(() => loadTweaks(), 1000);
+            setTimeout(() => loadTweaks(), 2000);
         } else {
             showToast(`Error: ${data.error || "Unknown error"}`, "error");
         }
@@ -1704,6 +1926,7 @@ async function revertSelectedTweaks() {
 
     btn.disabled = false;
     btn.textContent = "Revert Selected";
+    updateTweakCount();
 }
 
 function getSelectedTweakIds() {
@@ -1723,6 +1946,7 @@ function selectAllTweaks(checked) {
         cb.checked = checked;
         cb.indeterminate = false;
     });
+    updateTweakCount();
 }
 
 // ── Initialize ────────────────────────────────────────────────────
