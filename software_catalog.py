@@ -195,6 +195,7 @@ SOFTWARE_CATALOG = [
     {"name": "AutoHotkey", "id": "AutoHotkey.AutoHotkey", "category": "Utilities", "description": "Scripting for automation", "link": "https://www.autohotkey.com/", "icon": "", "match": ["autohotkey"], "foss": True},
     {"name": "Snipaste", "id": "Snipaste.Snipaste", "category": "Utilities", "description": "Screenshot & pin tool", "link": "https://www.snipaste.com/", "icon": "", "match": ["snipaste"], "foss": False},
     {"name": "AnyDesk", "id": "AnyDesk.AnyDesk", "category": "Utilities", "description": "Remote desktop", "link": "https://anydesk.com/", "icon": "", "match": ["anydesk"], "foss": False},
+    {"name": "AnyBurn", "id": "PowerSoftware.AnyBurn", "category": "Utilities", "description": "Lightweight CD/DVD/BD burning software", "link": "https://www.anyburn.com/", "icon": "", "match": ["anyburn"], "foss": False},
     {"name": "WinRAR", "id": "RARLab.WinRAR", "category": "Utilities", "description": "Archive manager", "link": "https://www.win-rar.com/", "icon": "", "match": ["winrar"], "foss": False},
     {"name": "NanaZip", "id": "M2Team.NanaZip", "category": "Utilities", "description": "Modern 7-Zip fork", "link": "https://github.com/M2Team/NanaZip", "icon": "", "match": ["nanazip"], "foss": True},
     {"name": "PeaZip", "id": "Giorgiotani.Peazip", "category": "Utilities", "description": "Cross-platform archiver", "link": "https://peazip.github.io/", "icon": "", "match": ["peazip"], "foss": True},
