@@ -448,25 +448,36 @@ def is_app_installed(catalog_item, installed_names):
 
     Matching strategy (in order):
     1. Exact match: catalog name exactly equals an installed app name
-    2. Explicit match patterns: curated substrings in the catalog's "match" list
-    3. Start-of-name match: catalog name appears at the start of an installed app name
+    2. Explicit match patterns: curated patterns from the catalog's "match" list
+       - If a pattern is surrounded by spaces/parens/bounds in the installed name,
+         it counts as a match. E.g. pattern "git" matches "Git (64-bit)" but NOT
+         "Digital Guardian" because "git" isn't at a word boundary there.
+    3. No fallback — if neither exact match nor explicit patterns match, it's not installed.
+       This prevents false positives like "Go" matching "Google Drive" or "Files"
+       matching "SQL Server Common Files".
     """
     import re
     item_name_lower = catalog_item["name"].lower()
-    # 1. Direct exact match
+
+    # 1. Direct exact match (case-insensitive)
     if item_name_lower in installed_names:
         return True
-    # 2. Use explicit match patterns from catalog
+
+    # 2. Use explicit match patterns with word-boundary awareness
     for pattern in catalog_item.get("match", []):
         pattern_lower = pattern.lower()
         for installed_name in installed_names:
-            if pattern_lower in installed_name:
+            # Pattern as exact match
+            if pattern_lower == installed_name:
                 return True
-    # 3. Start-of-name match: "Firefox" matches "Mozilla Firefox" but not "Waterfox"
-    #    This avoids false positives like "Git" matching "Digital Guardian"
-    for installed_name in installed_names:
-        if installed_name.startswith(item_name_lower) or " " + item_name_lower in installed_name:
-            return True
+            # Pattern as word-boundary substring: preceded by start-of-string or
+            # non-alphanumeric, followed by end-of-string or non-alphanumeric
+            # This prevents "git" from matching "digital guardian" but allows
+            # it to match "Git (64-bit)" or "Microsoft Git for Windows"
+            escaped = re.escape(pattern_lower)
+            if re.search(r'(?:^|[^a-z0-9])' + escaped + r'(?:$|[^a-z0-9])', installed_name):
+                return True
+
     return False
 
 
