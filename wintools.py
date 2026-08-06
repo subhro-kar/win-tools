@@ -15,6 +15,7 @@ from flask import Flask, render_template, jsonify, request
 
 from software_catalog import SOFTWARE_CATALOG, CATEGORY_ORDER, CATEGORY_COLORS
 from tweaks import TWEAK_CATEGORIES, get_tweak_by_id
+from winoptions import WINOPTION_CATEGORIES, get_winoption_by_id
 from migrate import (
     generate_key, encrypt_data, decrypt_data, create_bundle, extract_bundle,
     get_secrets_summary, test_r2_connection, upload_to_r2, download_from_r2,
@@ -27,11 +28,16 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 SCAN_SCRIPT = BASE_DIR / "scan-apps.ps1"
 SCAN_TWEAKS_SCRIPT = BASE_DIR / "scan-tweaks.ps1"
+SCAN_WINOPTIONS_SCRIPT = BASE_DIR / "scan-winoptions.ps1"
 APPS_JSON = DATA_DIR / "installed-apps.json"
 
 # Cached tweak states (refreshed on scan)
 _tweak_states_cache = {}
 _tweak_states_time = 0
+
+# Cached winoption states (refreshed on scan)
+_winoption_states_cache = {}
+_winoption_states_time = 0
 
 app = Flask(
     __name__,
@@ -246,6 +252,120 @@ def revert_tweaks(tweak_ids):
 
     _tweak_states_cache = {}
     _tweak_states_time = 0
+
+    return results
+
+
+# ── Windows Options State Scanning ──────────────────────────────────────
+
+def scan_winoption_states():
+    """Run scan-winoptions.ps1 and return current states of Windows options."""
+    global _winoption_states_cache, _winoption_states_time
+    # Cache for 30 seconds
+    if _winoption_states_cache and (time.time() - _winoption_states_time) < 30:
+        return _winoption_states_cache
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCAN_WINOPTIONS_SCRIPT)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            states = json.loads(result.stdout.strip())
+            # Convert string "True"/"False" to bool
+            for key, val in states.items():
+                if isinstance(val.get("is_on"), str):
+                    val["is_on"] = val["is_on"].lower() == "true"
+            _winoption_states_cache = states
+            _winoption_states_time = time.time()
+            return states
+    except Exception as e:
+        print(f"[ERROR] scan-winoption-states: {e}")
+
+    return {}
+
+
+def apply_winoptions(option_ids, action="apply"):
+    """Apply (enable) or revert (disable) selected Windows options."""
+    results = {}
+    commands = []
+
+    for oid in option_ids:
+        opt = get_winoption_by_id(oid)
+        if not opt:
+            results[oid] = {"success": False, "error": "Unknown option"}
+            continue
+
+        # Action-type items only have "run" commands
+        if opt.get("type") == "action":
+            run_cmds = opt.get("commands", {}).get("run", [])
+            if run_cmds:
+                combined = "; ".join(run_cmds)
+                commands.append((oid, combined, 300))  # longer timeout for actions
+            else:
+                results[oid] = {"success": False, "error": "No commands defined"}
+            continue
+
+        # Toggle-type items use "on" or "off" commands
+        tweak_commands = []
+
+        # Build registry commands
+        for reg in opt.get("registry", []):
+            path = reg["path"]
+            name = reg["name"]
+            value = reg["value_on"] if action == "apply" else reg["value_off"]
+            reg_type = reg.get("type", "REG_DWORD")
+            if reg_type == "REG_SZ":
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d "{value}" /f')
+            else:
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d {value} /f')
+
+        # Build service commands
+        svc_key = "on" if action == "apply" else "off"
+        for svc in opt.get("services", {}).get(svc_key, []):
+            svc_name = svc["name"]
+            svc_type = svc["startup_type"]
+            tweak_commands.append(f"Set-Service -Name '{svc_name}' -StartupType {svc_type}")
+            if action == "apply" and svc_type in ("Disabled", "Manual"):
+                tweak_commands.append(f"Stop-Service -Name '{svc_name}' -Force -ErrorAction SilentlyContinue")
+            elif action == "revert" and svc_type in ("Automatic", "Manual"):
+                tweak_commands.append(f"Start-Service -Name '{svc_name}' -ErrorAction SilentlyContinue")
+
+        # Explicit commands
+        cmd_key = "on" if action == "apply" else "off"
+        for cmd in opt.get("commands", {}).get(cmd_key, []):
+            tweak_commands.append(cmd)
+
+        if tweak_commands:
+            combined = "; ".join(tweak_commands)
+            commands.append((oid, combined, 60))
+        else:
+            results[oid] = {"success": True, "message": "No commands needed"}
+
+    # Run all commands
+    for oid, cmd, timeout in commands:
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            if r.returncode == 0:
+                opt = get_winoption_by_id(oid)
+                msg = "Applied" if action == "apply" else "Reverted"
+                if opt and opt.get("reboot_required") and action == "apply":
+                    msg += " (reboot required)"
+                results[oid] = {"success": True, "message": msg, "output": r.stdout[-500:] if r.stdout else ""}
+            else:
+                error_msg = r.stderr.strip()[:300] if r.stderr else f"Exit code {r.returncode}"
+                results[oid] = {"success": False, "error": error_msg, "output": r.stdout[-500:] if r.stdout else ""}
+        except subprocess.TimeoutExpired:
+            results[oid] = {"success": False, "error": "Command timed out"}
+        except Exception as e:
+            results[oid] = {"success": False, "error": str(e)[:200]}
+
+    # Invalidate cache
+    _winoption_states_cache = {}
+    _winoption_states_time = 0
 
     return results
 
@@ -731,6 +851,82 @@ def api_tweaks_apply():
         "failed": fail_count,
         "action": action,
     })
+
+
+# ── Windows Options Routes ──────────────────────────────────────────────
+
+@app.route("/api/winoptions")
+def api_winoptions():
+    """Return all Windows option definitions with current states."""
+    states = scan_winoption_states()
+    result = {}
+    for cat_name, cat_data in WINOPTION_CATEGORIES.items():
+        result[cat_name] = {
+            "icon": cat_data["icon"],
+            "description": cat_data["description"],
+            "options": [],
+        }
+        for option in cat_data["options"]:
+            state = states.get(option["id"], {"is_on": None, "current_value": None})
+            entry = {
+                "id": option["id"],
+                "name": option["name"],
+                "description": option["description"],
+                "type": option.get("type", "toggle"),
+                "recommended": option.get("recommended", "off"),
+                "requires_admin": option.get("requires_admin", False),
+                "reboot_required": option.get("reboot_required", False),
+                "risk": option.get("risk", "safe"),
+                "warning": option.get("warning", ""),
+                "current_state": state.get("is_on"),
+                "current_value": state.get("current_value"),
+            }
+            result[cat_name]["options"].append(entry)
+
+    # Check if running as admin
+    try:
+        import ctypes
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        is_admin = False
+
+    result["_meta"] = {"is_admin": is_admin}
+    return jsonify(result)
+
+
+@app.route("/api/winoptions/apply", methods=["POST"])
+def api_winoptions_apply():
+    """Apply, revert, or run Windows options.
+    Body: {"options": ["rdp_toggle", ...], "action": "apply"|"revert"}
+    """
+    data = request.json or {}
+    option_ids = data.get("options", [])
+    action = data.get("action", "apply")
+
+    if not option_ids:
+        return jsonify({"success": False, "error": "No options selected"})
+
+    results = apply_winoptions(option_ids, action)
+
+    success_count = sum(1 for v in results.values() if v.get("success"))
+    fail_count = len(results) - success_count
+
+    # Check if any successful option requires reboot
+    reboot_required = False
+    for oid in option_ids:
+        opt = get_winoption_by_id(oid)
+        if opt and opt.get("reboot_required") and results.get(oid, {}).get("success"):
+            reboot_required = True
+
+    return jsonify({
+        "success": True,
+        "results": results,
+        "applied": success_count,
+        "failed": fail_count,
+        "action": action,
+        "reboot_required": reboot_required,
+    })
+
 
 class Api:
     """JS-callable API for pywebview's window.pywebview.api bridge."""

@@ -102,6 +102,13 @@ function switchTab(tabId) {
             loadTweaks();
         }
     }
+    if (tabId === "winoptions") {
+        if (winoptionsData) {
+            renderWinOptions(winoptionsData, winoptionsIsElevated);
+        } else {
+            loadWinOptions();
+        }
+    }
 }
 
 // ── Toast Notifications ─────────────────────────────────────────
@@ -2222,6 +2229,292 @@ function selectAllTweaks(checked) {
         cb.indeterminate = false;
     });
     updateTweakCount();
+}
+
+// ── Windows Options & Tools ────────────────────────────────────────────
+
+let winoptionsData = null;
+let winoptionsIsElevated = false;
+
+async function loadWinOptions() {
+    const el = document.getElementById("winoptions-content");
+    const resultEl = document.getElementById("winoptions-result");
+    resultEl.textContent = "";
+    showLoading(el, "Scanning Windows options...");
+
+    try {
+        const res = await fetch(`${API}/winoptions`);
+        const rawData = await res.json();
+        const isElevated = rawData._meta && rawData._meta.is_admin;
+        delete rawData._meta;
+        winoptionsData = rawData;
+        winoptionsIsElevated = isElevated;
+        renderWinOptions(winoptionsData, isElevated);
+    } catch (err) {
+        el.textContent = "";
+        el.appendChild(createElement("div", { className: "loading" }, [`Error: ${err.message}`]));
+    }
+}
+
+function renderWinOptions(data, isElevated) {
+    const el = document.getElementById("winoptions-content");
+    el.textContent = "";
+
+    if (!isElevated) {
+        const banner = createElement("div", { className: "wo-banner" }, [
+            "⚠️ Not running as Administrator — most options require admin rights. Right-click WinTools and select \"Run as Administrator\"."
+        ]);
+        el.appendChild(banner);
+    }
+
+    for (const [catName, catData] of Object.entries(data)) {
+        const section = createElement("div", { className: "wo-section" });
+        const header = createElement("div", { className: "wo-section-header" });
+        const icon = catData.icon || "⚙";
+
+        header.appendChild(createElement("span", { className: "wo-section-icon" }, [icon]));
+        header.appendChild(createElement("span", { className: "wo-section-title" }, [catName]));
+        header.appendChild(createElement("span", { className: "wo-section-desc" }, [catData.description]));
+        section.appendChild(header);
+
+        const list = createElement("div", { className: "wo-list" });
+
+        for (const option of catData.options) {
+            const isAction = option.type === "action";
+            const isOn = option.current_state === true;
+            const row = createElement("div", {
+                className: `wo-row${isOn ? " wo-on" : ""}${isAction ? " wo-action" : ""}`,
+            });
+            row.dataset.id = option.id;
+            row.dataset.type = option.type;
+            row.dataset.risk = option.risk || "safe";
+            if (option.reboot_required) row.dataset.reboot = "1";
+            if (option.requires_admin) row.dataset.admin = "1";
+
+            // Left side: name + description
+            const left = createElement("div", { className: "wo-left" });
+            const nameLine = createElement("div", { className: "wo-name-line" });
+            nameLine.appendChild(createElement("span", { className: "wo-name" }, [option.name]));
+
+            // Compact badges
+            const badges = createElement("span", { className: "wo-badges" });
+            if (option.recommended === "on") badges.appendChild(createElement("span", { className: "wo-badge wo-badge-rec" }, ["On"]));
+            if (option.reboot_required) badges.appendChild(createElement("span", { className: "wo-badge wo-badge-reboot" }, ["Reboot"]));
+            if (isAction) badges.appendChild(createElement("span", { className: "wo-badge wo-badge-run" }, ["Action"]));
+            if (option.risk === "risky") badges.appendChild(createElement("span", { className: "wo-badge wo-badge-risk" }, ["⚠ Risky"]));
+            if (option.risk === "moderate") badges.appendChild(createElement("span", { className: "wo-badge wo-badge-mod" }, ["Moderate"]));
+            if (option.requires_admin) badges.appendChild(createElement("span", { className: "wo-badge wo-badge-admin" }, ["Admin"]));
+            nameLine.appendChild(badges);
+            left.appendChild(nameLine);
+
+            left.appendChild(createElement("div", { className: "wo-desc" }, [option.description]));
+
+            if (option.warning) {
+                left.appendChild(createElement("div", { className: "wo-warning" }, [option.warning]));
+            }
+
+            // State line
+            const stateLine = createElement("div", { className: "wo-state" });
+            if (isAction) {
+                stateLine.appendChild(createElement("span", { className: "wo-state-action" }, ["One-time action"]));
+            } else if (isOn) {
+                stateLine.appendChild(createElement("span", { className: "wo-state-on" }, ["Enabled"]));
+            } else if (option.current_state === false) {
+                stateLine.appendChild(createElement("span", { className: "wo-state-off" }, ["Disabled"]));
+            } else if (option.current_value === "Not available" || option.current_value === "need_admin") {
+                stateLine.appendChild(createElement("span", { className: "wo-state-unknown" }, ["Not available"]));
+            } else {
+                stateLine.appendChild(createElement("span", { className: "wo-state-unknown" }, ["Default"]));
+            }
+            if (option.current_value && option.current_value !== "action" && option.current_value !== "Not available" && option.current_value !== "need_admin") {
+                stateLine.appendChild(createElement("span", { className: "wo-state-val" }, [option.current_value]));
+            }
+            left.appendChild(stateLine);
+
+            // Right side: toggle switch or run button
+            const right = createElement("div", { className: "wo-right" });
+            if (isAction) {
+                const runBtn = createElement("button", { className: "wo-run-btn", title: option.name });
+                runBtn.textContent = "▶ Run";
+                runBtn.addEventListener("click", async () => {
+                    runBtn.disabled = true;
+                    runBtn.textContent = "Running…";
+                    try {
+                        const res = await fetch(`${API}/winoptions/apply`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ options: [option.id], action: "apply" }),
+                        });
+                        const result = await res.json();
+                        const r = result.results[option.id] || {};
+                        if (r.success) {
+                            runBtn.textContent = "✓ Done";
+                            runBtn.classList.add("wo-run-done");
+                            showToast(`${option.name}: ${r.message || "Completed"}`, "success");
+                        } else {
+                            runBtn.textContent = "✗ Failed";
+                            runBtn.classList.add("wo-run-fail");
+                            showToast(`${option.name}: ${r.error || "Failed"}`, "error");
+                        }
+                    } catch (err) {
+                        runBtn.textContent = "✗ Error";
+                        runBtn.classList.add("wo-run-fail");
+                        showToast(`${option.name}: ${err.message}`, "error");
+                    }
+                    setTimeout(() => {
+                        runBtn.disabled = false;
+                        runBtn.textContent = "▶ Run";
+                        runBtn.classList.remove("wo-run-done", "wo-run-fail");
+                    }, 3000);
+                });
+                right.appendChild(runBtn);
+            } else {
+                // Toggle switch — applies immediately on change
+                const toggle = createElement("label", { className: "wo-toggle" });
+                const input = createElement("input", { type: "checkbox", className: "wo-toggle-input", id: `wo-${option.id}` });
+                input.value = option.id;
+                input.checked = isOn;
+                input.dataset.type = "toggle";
+                input.dataset.risk = option.risk || "safe";
+                input.dataset.rebootRequired = option.reboot_required ? "1" : "0";
+                input.dataset.optionId = option.id;
+                if (option.warning) input.dataset.warning = option.warning;
+                input.dataset.currentState = isOn ? "on" : option.current_state === false ? "off" : "unknown";
+
+                // Apply immediately when toggled
+                input.addEventListener("change", async function() {
+                    const oid = this.dataset.optionId;
+                    const wantOn = this.checked;
+                    const action = wantOn ? "apply" : "revert";
+                    const row = this.closest(".wo-row");
+
+                    // Show loading on the toggle
+                    this.disabled = true;
+                    row.classList.add("wo-loading");
+
+                    try {
+                        const res = await fetch(`${API}/winoptions/apply`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ options: [oid], action: action }),
+                        });
+                        const data = await res.json();
+                        const r = data.results[oid] || {};
+                        if (r.success) {
+                            row.classList.toggle("wo-on", wantOn);
+                            this.checked = wantOn;
+                            // Update state text
+                            const stateEl = row.querySelector(".wo-state-on, .wo-state-off, .wo-state-unknown");
+                            if (stateEl) {
+                                stateEl.className = wantOn ? "wo-state-on" : "wo-state-off";
+                                stateEl.textContent = wantOn ? "Enabled" : "Disabled";
+                            }
+                            const verb = wantOn ? "Enabled" : "Disabled";
+                            showToast(`${option.name}: ${verb}`, "success");
+                            if (data.reboot_required) {
+                                showToast("💻 Reboot required for some changes", "info");
+                            }
+                            // Rescan after a short delay
+                            setTimeout(() => loadWinOptions(), 1500);
+                        } else {
+                            // Revert the toggle visually
+                            this.checked = !wantOn;
+                            row.classList.toggle("wo-on", this.checked);
+                            showToast(`${option.name}: ${r.error || "Failed"}`, "error");
+                        }
+                    } catch (err) {
+                        this.checked = !wantOn;
+                        row.classList.toggle("wo-on", this.checked);
+                        showToast(`${option.name}: ${err.message}`, "error");
+                    }
+                    this.disabled = false;
+                    row.classList.remove("wo-loading");
+                });
+
+                const slider = createElement("span", { className: "wo-toggle-slider" });
+                toggle.append(input, slider);
+                right.appendChild(toggle);
+            }
+
+            row.append(left, right);
+            list.appendChild(row);
+        }
+
+        section.appendChild(list);
+        el.appendChild(section);
+    }
+}
+
+async function applySelectedWinOptions() {
+    // Kept for compatibility but toggles apply immediately now
+    showToast("Toggle switches apply automatically when flipped", "info");
+}
+
+async function revertSelectedWinOptions() {
+    // Kept for compatibility but toggles apply immediately now
+    showToast("Toggle switches apply automatically — just flip them off", "info");
+}
+
+async function runSelectedWinOptions() {
+    showToast("Use the ▶ Run button on each action item", "info");
+}
+
+function selectAllWinOptions(checked) {
+    // No longer needed — toggles are instant
+}
+
+function updateWinOptionCount() {
+    // No longer needed — no batch buttons
+}
+
+async function doWinOptionAction(selected, action) {
+    const resultEl = document.getElementById("winoptions-result");
+    resultEl.textContent = "";
+
+    const verb = action === "revert" ? "Reverting" : "Applying";
+    resultEl.appendChild(createElement("div", { className: "loading" }, [`${verb} ${selected.length} option(s)...`]));
+
+    try {
+        const res = await fetch(`${API}/winoptions/apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ options: selected, action: action }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            resultEl.textContent = "";
+            const verbPast = action === "revert" ? "Reverted" : "Applied";
+            const card = createElement("div", { className: "wo-result success" });
+            card.appendChild(createElement("h4", {}, [`${verbPast} ${data.applied} option(s)`]));
+            if (data.failed > 0) {
+                card.appendChild(createElement("p", { style: "color:var(--orange);margin-top:4px;" }, [
+                    `${data.failed} option(s) failed`
+                ]));
+            }
+            if (data.reboot_required) {
+                card.appendChild(createElement("div", { className: "wo-reboot-warning" }, [
+                    "💻 A reboot is required for some changes to take effect."
+                ]));
+            }
+            const details = createElement("div", { className: "wo-result-details" });
+            for (const [id, result] of Object.entries(data.results)) {
+                const item = createElement("div", { className: `wo-result-item${result.success ? "" : " failed"}` });
+                item.textContent = `${id}: ${result.success ? "✓ " + (result.message || "OK") : "✗ " + (result.error || "Failed")}`;
+                details.appendChild(item);
+            }
+            card.appendChild(details);
+            resultEl.appendChild(card);
+            showToast(`${verbPast} ${data.applied} option(s)!`, "success");
+            setTimeout(() => loadWinOptions(), 2000);
+        } else {
+            showToast(`Error: ${data.error || "Unknown error"}`, "error");
+            resultEl.textContent = "";
+        }
+    } catch (err) {
+        showToast(`Error: ${err.message}`, "error");
+        resultEl.textContent = "";
+    }
 }
 
 // ── Initialize ────────────────────────────────────────────────────
