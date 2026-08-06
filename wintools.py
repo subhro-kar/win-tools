@@ -443,37 +443,92 @@ def api_export():
 
 # ── Install/Uninstall Routes ────────────────────────────────────────────
 
-def is_app_installed(catalog_item, installed_names):
-    """Check if a catalog item matches any installed app.
+def _get_winget_installed_ids():
+    """Run `winget list` and return a set of installed winget package IDs (lowercased).
 
-    Matching strategy (in order):
-    1. Exact match: catalog name exactly equals an installed app name
-    2. Explicit match patterns: curated patterns from the catalog's "match" list
-       - If a pattern is surrounded by spaces/parens/bounds in the installed name,
-         it counts as a match. E.g. pattern "git" matches "Git (64-bit)" but NOT
-         "Digital Guardian" because "git" isn't at a word boundary there.
-    3. No fallback — if neither exact match nor explicit patterns match, it's not installed.
-       This prevents false positives like "Go" matching "Google Drive" or "Files"
-       matching "SQL Server Common Files".
+    Uses the same approach as Chris Titus WinUtil: parse the winget list output
+    and match package IDs (like "7zip.7zip", "Microsoft.Edge") by looking for
+    entries that contain a dot and are surrounded by whitespace columns.
+    """
+    try:
+        result = subprocess.run(
+            ["winget", "list", "--accept-source-agreements", "--disable-interactivity"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            return set()
+        ids = set()
+        for line in result.stdout.splitlines():
+            # Skip header line and separator lines
+            stripped = line.strip()
+            if not stripped or stripped.startswith("Name") or stripped.startswith("-"):
+                continue
+            # winget list output has columns separated by multi-space gaps.
+            # The ID column is the second major column and contains dots (e.g., "7zip.7zip").
+            # Strategy: find all tokens that look like winget IDs (contain at least one dot
+            # and aren't just version numbers like "7.22.5282.0").
+            # A winget ID always starts with a letter and contains at least one dot followed
+            # by another letter/word (e.g., "Git.Git", "Microsoft.Edge", "CPUID.CPU-Z").
+            import re
+            for match in re.finditer(r'\b([A-Za-z][\w]*\.[\w.-]+)\b', line):
+                candidate = match.group(1)
+                # Must contain at least one dot and the part after the first dot must start
+                # with a letter (not a digit), to exclude version numbers like "7.22.5282.0"
+                parts = candidate.split('.')
+                if len(parts) >= 2 and parts[1][0:1].isalpha():
+                    ids.add(candidate.lower())
+        return ids
+    except Exception:
+        return set()
+
+
+# Cache winget IDs so we don't re-run winget list on every catalog request
+_winget_installed_cache = None
+_winget_installed_cache_time = 0
+
+
+def get_winget_installed():
+    """Return cached set of installed winget package IDs (refreshed every 60 seconds)."""
+    global _winget_installed_cache, _winget_installed_cache_time
+    if _winget_installed_cache and (time.time() - _winget_installed_cache_time) < 60:
+        return _winget_installed_cache
+    _winget_installed_cache = _get_winget_installed_ids()
+    _winget_installed_cache_time = time.time()
+    return _winget_installed_cache
+
+
+def is_app_installed(catalog_item, installed_names, winget_installed=None):
+    """Check if a catalog item is installed.
+
+    Matching strategy (in order of priority):
+    1. Winget ID match: if the catalog item has a winget ID and it appears in
+       `winget list` output, it's installed. This is the most reliable method.
+    2. Exact name match: catalog name exactly equals an installed app name.
+    3. Explicit match patterns with word-boundary awareness from the catalog's
+       "match" list.
     """
     import re
+
+    # 1. Winget ID match (most reliable)
+    if winget_installed is not None and catalog_item.get("id"):
+        pkg_id = catalog_item["id"].lower().strip()
+        if pkg_id and pkg_id in winget_installed:
+            return True
+
     item_name_lower = catalog_item["name"].lower()
 
-    # 1. Direct exact match (case-insensitive)
+    # 2. Direct exact match (case-insensitive)
     if item_name_lower in installed_names:
         return True
 
-    # 2. Use explicit match patterns with word-boundary awareness
+    # 3. Use explicit match patterns with word-boundary awareness
     for pattern in catalog_item.get("match", []):
         pattern_lower = pattern.lower()
         for installed_name in installed_names:
             # Pattern as exact match
             if pattern_lower == installed_name:
                 return True
-            # Pattern as word-boundary substring: preceded by start-of-string or
-            # non-alphanumeric, followed by end-of-string or non-alphanumeric
-            # This prevents "git" from matching "digital guardian" but allows
-            # it to match "Git (64-bit)" or "Microsoft Git for Windows"
+            # Pattern as word-boundary substring
             escaped = re.escape(pattern_lower)
             if re.search(r'(?:^|[^a-z0-9])' + escaped + r'(?:$|[^a-z0-9])', installed_name):
                 return True
@@ -488,10 +543,14 @@ def api_catalog():
     if data:
         for a in data.get("Applications", []):
             installed_names.add(a.get("Name", "").lower())
+
+    # Get winget installed IDs for more reliable detection
+    winget_installed = get_winget_installed()
+
     catalog = []
     for item in SOFTWARE_CATALOG:
         entry = dict(item)
-        entry["installed"] = is_app_installed(item, installed_names)
+        entry["installed"] = is_app_installed(item, installed_names, winget_installed)
         catalog.append(entry)
     grouped = {}
     for cat in CATEGORY_ORDER:
