@@ -444,20 +444,28 @@ def api_export():
 # ── Install/Uninstall Routes ────────────────────────────────────────────
 
 def is_app_installed(catalog_item, installed_names):
-    """Check if a catalog item matches any installed app using fuzzy substring matching."""
+    """Check if a catalog item matches any installed app.
+
+    Matching strategy (in order):
+    1. Exact match: catalog name exactly equals an installed app name
+    2. Explicit match patterns: curated substrings in the catalog's "match" list
+    3. Start-of-name match: catalog name appears at the start of an installed app name
+    """
+    import re
     item_name_lower = catalog_item["name"].lower()
-    # Direct exact match first
+    # 1. Direct exact match
     if item_name_lower in installed_names:
         return True
-    # Use explicit match patterns from catalog
+    # 2. Use explicit match patterns from catalog
     for pattern in catalog_item.get("match", []):
         pattern_lower = pattern.lower()
         for installed_name in installed_names:
             if pattern_lower in installed_name:
                 return True
-    # Fallback: check if catalog name is a substring of any installed app
+    # 3. Start-of-name match: "Firefox" matches "Mozilla Firefox" but not "Waterfox"
+    #    This avoids false positives like "Git" matching "Digital Guardian"
     for installed_name in installed_names:
-        if item_name_lower in installed_name:
+        if installed_name.startswith(item_name_lower) or " " + item_name_lower in installed_name:
             return True
     return False
 
