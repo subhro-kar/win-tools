@@ -2311,3 +2311,314 @@ body {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* ── Privacy & Security Tab ───────────────────────────────────────── */
+
+.privacy-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: var(--card-bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.privacy-search-input {
+    flex: 1;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.privacy-search-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(79, 140, 235, 0.2);
+}
+
+.privacy-allowlist-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.privacy-category {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--card-bg);
+}
+
+.privacy-category-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    cursor: pointer;
+    background: var(--card-bg);
+    transition: background 0.2s;
+    user-select: none;
+}
+
+.privacy-category-header:hover {
+    background: var(--hover-bg);
+}
+
+.privacy-category-header.expanded {
+    border-bottom: 1px solid var(--border);
+}
+
+.privacy-category-icon {
+    font-size: 18px;
+}
+
+.privacy-category-name {
+    font-weight: 600;
+    font-size: 15px;
+    flex: 1;
+}
+
+.privacy-category-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--bg);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.privacy-category-chevron {
+    font-size: 12px;
+    color: var(--text-muted);
+    transition: transform 0.2s;
+}
+
+.privacy-category-header.expanded .privacy-category-chevron {
+    transform: rotate(90deg);
+}
+
+.privacy-category-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+}
+
+.privacy-category-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    padding: 8px 16px 4px;
+    margin: 0;
+}
+
+.privacy-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 8px 16px 16px;
+}
+
+.privacy-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.privacy-card:hover {
+    border-color: var(--accent);
+}
+
+.privacy-card.active {
+    border-color: #2ea043;
+    background: rgba(46, 160, 67, 0.05);
+}
+
+.privacy-card.risk-moderate {
+    border-left: 3px solid var(--orange);
+}
+
+.privacy-card.risk-risky {
+    border-left: 3px solid #f85149;
+}
+
+.privacy-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+}
+
+.privacy-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.privacy-name-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.privacy-name {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.privacy-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    line-height: 1.4;
+}
+
+.privacy-allowlist-btn {
+    margin-top: 6px;
+    font-size: 11px;
+    padding: 2px 8px;
+}
+
+.badge-allowlist {
+    background: rgba(79, 140, 235, 0.15);
+    color: #4f8ceb;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+/* Allowlist Modal */
+.privacy-allowlist-modal {
+    max-width: 600px;
+    width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.privacy-allowlist-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+}
+
+.privacy-allowlist-entries {
+    margin-bottom: 16px;
+}
+
+.privacy-allowlist-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 4px;
+}
+
+.privacy-allowlist-name {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.privacy-allowlist-type {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--card-bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+.privacy-allowlist-empty {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 16px;
+}
+
+.privacy-allowlist-add {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.privacy-allowlist-add h4,
+.privacy-manual-entry h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+}
+
+.privacy-add-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.privacy-app-select {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+}
+
+.privacy-manual-entry {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.privacy-manual-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+}
+
+.btn-danger {
+    background: #f85149;
+    color: #fff;
+    border-color: #f85149;
+    padding: 2px 8px;
+    font-size: 11px;
+}
+
+.btn-danger:hover {
+    background: #da3633;
+    border-color: #da3633;
+}
+
+/* Responsive adjustments for privacy tab */
+@media (max-width: 768px) {
+    .privacy-grid {
+        grid-template-columns: 1fr;
+        padding: 8px;
+    }
+    .privacy-category-header {
+        padding: 10px 12px;
+    }
+    .privacy-card {
+        padding: 8px;
+    }
+}

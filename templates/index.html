@@ -50,6 +50,10 @@
                     <span class="tab-icon">&#128295;</span>
                     <span class="tab-label">Options</span>
                 </li>
+                <li class="nav-tab" data-tab="privacy">
+                    <span class="tab-icon">&#128272;</span>
+                    <span class="tab-label">Privacy</span>
+                </li>
             </ul>
 
             <div class="sidebar-footer">
@@ -292,6 +296,21 @@
                 <div id="winoptions-result" class="wo-result-area"></div>
                 <div id="winoptions-content" class="wo-content">
                     <div class="loading">Scanning Windows options...</div>
+                </div>
+            </section>
+
+            <!-- Privacy & Security Tab -->
+            <section id="tab-privacy" class="tab-content">
+                <div class="tab-header">
+                    <h1>Privacy & Security</h1>
+                    <p class="tab-desc">Harden your Windows privacy and security. Toggle settings to apply immediately. <span class="privacy-allowlist-hint">Settings with ⚙ support app-level exceptions.</span></p>
+                </div>
+                <div class="privacy-toolbar">
+                    <input type="text" id="privacy-search" placeholder="Search privacy settings..." class="privacy-search-input">
+                </div>
+                <div id="privacy-result" class="wo-result-area"></div>
+                <div id="privacy-content" class="privacy-content">
+                    <div class="loading">Scanning privacy settings...</div>
                 </div>
             </section>
 

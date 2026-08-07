@@ -16,6 +16,7 @@ from flask import Flask, render_template, jsonify, request
 from software_catalog import SOFTWARE_CATALOG, CATEGORY_ORDER, CATEGORY_COLORS
 from tweaks import TWEAK_CATEGORIES, get_tweak_by_id
 from winoptions import WINOPTION_CATEGORIES, get_winoption_by_id
+from privacy import PRIVACY_CATEGORIES, get_privacy_by_id
 from migrate import (
     generate_key, encrypt_data, decrypt_data, create_bundle, extract_bundle,
     get_secrets_summary, test_r2_connection, upload_to_r2, download_from_r2,
@@ -29,7 +30,10 @@ DATA_DIR = BASE_DIR / "data"
 SCAN_SCRIPT = BASE_DIR / "scan-apps.ps1"
 SCAN_TWEAKS_SCRIPT = BASE_DIR / "scan-tweaks.ps1"
 SCAN_WINOPTIONS_SCRIPT = BASE_DIR / "scan-winoptions.ps1"
+SCAN_PRIVACY_SCRIPT = BASE_DIR / "scan-privacy.ps1"
+SCAN_PRIVACY_APPS_SCRIPT = BASE_DIR / "scan-privacy-apps.ps1"
 APPS_JSON = DATA_DIR / "installed-apps.json"
+ALLOWLISTS_JSON = DATA_DIR / "allowlists.json"
 
 # Cached tweak states (refreshed on scan)
 _tweak_states_cache = {}
@@ -38,6 +42,10 @@ _tweak_states_time = 0
 # Cached winoption states (refreshed on scan)
 _winoption_states_cache = {}
 _winoption_states_time = 0
+
+# Cached privacy states (refreshed on scan)
+_privacy_states_cache = {}
+_privacy_states_time = 0
 
 app = Flask(
     __name__,
@@ -1004,6 +1012,370 @@ def api_winoptions_apply():
         "action": action,
         "reboot_required": reboot_required,
     })
+
+
+# ── Privacy & Security State Scanning ────────────────────────────────────
+
+def scan_privacy_states():
+    """Run scan-privacy.ps1 and return current states of privacy settings."""
+    global _privacy_states_cache, _privacy_states_time
+    # Cache for 30 seconds
+    if _privacy_states_cache and (time.time() - _privacy_states_time) < 30:
+        return _privacy_states_cache
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCAN_PRIVACY_SCRIPT)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            states = json.loads(result.stdout.strip())
+            # Convert string "True"/"False" to bool
+            for key, val in states.items():
+                if isinstance(val, dict) and "is_on" in val:
+                    if isinstance(val["is_on"], str):
+                        val["is_on"] = val["is_on"].lower() == "true"
+            _privacy_states_cache = states
+            _privacy_states_time = time.time()
+            return states
+    except Exception as e:
+        print(f"[ERROR] scan-privacy-states: {e}")
+
+    return {}
+
+
+def apply_privacy_settings(setting_ids, action="apply"):
+    """Apply or revert selected privacy settings."""
+    results = {}
+    commands = []
+
+    for sid in setting_ids:
+        setting = get_privacy_by_id(sid)
+        if not setting:
+            results[sid] = {"success": False, "error": "Unknown setting"}
+            continue
+
+        if setting.get("type") == "action":
+            run_cmds = setting.get("commands", {}).get("run", [])
+            if run_cmds:
+                combined = "; ".join(run_cmds)
+                commands.append((sid, combined, 300))
+            else:
+                results[sid] = {"success": False, "error": "No commands defined"}
+            continue
+
+        tweak_commands = []
+        # Build registry commands
+        for reg in setting.get("registry", []):
+            path = reg["path"]
+            name = reg["name"]
+            value = reg["value_on"] if action == "apply" else reg["value_off"]
+            reg_type = reg.get("type", "REG_DWORD")
+            if reg_type == "REG_SZ":
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d "{value}" /f')
+            else:
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d {value} /f')
+
+        # Build service commands
+        svc_key = "on" if action == "apply" else "off"
+        for svc in setting.get("services", {}).get(svc_key, []):
+            svc_name = svc["name"]
+            svc_type = svc["startup_type"]
+            tweak_commands.append(f"Set-Service -Name '{svc_name}' -StartupType {svc_type} -ErrorAction SilentlyContinue")
+            if action == "apply" and svc_type in ("Disabled", "Manual"):
+                tweak_commands.append(f"Stop-Service -Name '{svc_name}' -Force -ErrorAction SilentlyContinue")
+            elif action == "revert" and svc_type in ("Automatic", "Manual"):
+                tweak_commands.append(f"Start-Service -Name '{svc_name}' -ErrorAction SilentlyContinue")
+
+        # Explicit commands
+        cmd_key = "on" if action == "apply" else "off"
+        for cmd in setting.get("commands", {}).get(cmd_key, []):
+            tweak_commands.append(cmd)
+
+        if tweak_commands:
+            combined = "; ".join(tweak_commands)
+            commands.append((sid, combined, 60))
+        else:
+            results[sid] = {"success": True, "message": "No commands needed"}
+
+    # Run all commands
+    for sid, cmd, timeout in commands:
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            if r.returncode == 0:
+                setting = get_privacy_by_id(sid)
+                msg = "Applied" if action == "apply" else "Reverted"
+                if setting and setting.get("reboot_required") and action == "apply":
+                    msg += " (reboot required)"
+                results[sid] = {"success": True, "message": msg, "output": r.stdout[-500:] if r.stdout else ""}
+            else:
+                error_msg = r.stderr.strip()[:300] if r.stderr else f"Exit code {r.returncode}"
+                results[sid] = {"success": False, "error": error_msg, "output": r.stdout[-500:] if r.stdout else ""}
+        except subprocess.TimeoutExpired:
+            results[sid] = {"success": False, "error": "Command timed out"}
+        except Exception as e:
+            results[sid] = {"success": False, "error": str(e)[:200]}
+
+    # Invalidate cache
+    _privacy_states_cache = {}
+    _privacy_states_time = 0
+
+    return results
+
+
+def load_allowlists():
+    """Load allowlists from data/allowlists.json."""
+    if not ALLOWLISTS_JSON.exists():
+        return {}
+    try:
+        with open(ALLOWLISTS_JSON, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_allowlists(data):
+    """Save allowlists to data/allowlists.json."""
+    DATA_DIR.mkdir(exist_ok=True)
+    with open(ALLOWLISTS_JSON, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def apply_allowlist_entries(setting_id, entries, action="add"):
+    """Apply or remove per-app allowlist registry entries for a setting."""
+    setting = get_privacy_by_id(setting_id)
+    if not setting or not setting.get("allowlist_support"):
+        return {"success": False, "error": "Setting does not support allowlists"}
+
+    base_path = setting.get("allowlist_registry")
+    if not base_path:
+        return {"success": False, "error": "No allowlist registry path defined"}
+
+    # Convert HKCU\ to HKCU:\ for PowerShell
+    ps_base = base_path.replace(r"HKCU\\", "HKCU:\\").replace(r"HKLM\\", "HKLM:\\").replace("\\", "\\\\")
+    # Actually use reg.exe format
+    reg_base = base_path
+
+    value_allow = setting.get("allowlist_value_allow", "Allow")
+    value_deny = setting.get("allowlist_value_deny", "Deny")
+
+    commands = []
+    for entry in entries:
+        app_id = entry.get("id", "")
+        app_type = entry.get("type", "exe_path")
+        app_name = entry.get("name", app_id)
+
+        if action == "add":
+            if app_type == "package_family":
+                # For packaged apps: HKCU\...\ConsentStore\<capability>\<PackageFamilyName>\Value = Allow
+                cmd = f'reg add "{reg_base}\\{app_id}" /v Value /t REG_SZ /d "{value_allow}" /f'
+            else:
+                # For desktop apps: HKCU\...\ConsentStore\<capability>\NonPackaged\<escaped_path>\Value = Allow
+                escaped = app_id.replace("\\", "\\\\")
+                cmd = f'reg add "{reg_base}\\NonPackaged\\{escaped}" /v Value /t REG_SZ /d "{value_allow}" /f'
+            commands.append(cmd)
+        elif action == "remove":
+            if app_type == "package_family":
+                cmd = f'reg delete "{reg_base}\\{app_id}" /f 2>$null'
+            else:
+                escaped = app_id.replace("\\", "\\\\")
+                cmd = f'reg delete "{reg_base}\\NonPackaged\\{escaped}" /f 2>$null'
+            commands.append(cmd)
+
+    if commands:
+        combined = "; ".join(commands)
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", combined],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode == 0:
+                return {"success": True, "message": f"Allowlist {action}d"}
+            else:
+                return {"success": False, "error": r.stderr.strip()[:300] if r.stderr else "Registry command failed"}
+        except Exception as e:
+            return {"success": False, "error": str(e)[:200]}
+
+    return {"success": True, "message": "No changes needed"}
+
+
+# ── Privacy & Security Flask Routes ──────────────────────────────────────
+
+@app.route("/api/privacy")
+def api_privacy():
+    """Return all privacy categories with current states."""
+    states = scan_privacy_states()
+    is_elevated = False
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "(New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout.strip().lower() == "true":
+            is_elevated = True
+    except Exception:
+        pass
+
+    allowlists = load_allowlists()
+
+    result = {}
+    for cat_name, cat_data in PRIVACY_CATEGORIES.items():
+        result[cat_name] = {
+            "icon": cat_data["icon"],
+            "description": cat_data["description"],
+            "settings": [],
+        }
+        for setting in cat_data["settings"]:
+            entry = dict(setting)
+            sid = setting["id"]
+            state = states.get(sid, {})
+            entry["current_state"] = state.get("is_on")
+            entry["current_value"] = state.get("current_value")
+            # Add allowlist data if supported
+            if setting.get("allowlist_support"):
+                entry["allowlist_entries"] = allowlists.get(sid, [])
+            result[cat_name]["settings"].append(entry)
+
+    result["_meta"] = {"is_admin": is_elevated}
+    return jsonify(result)
+
+
+@app.route("/api/privacy/apply", methods=["POST"])
+def api_privacy_apply():
+    """Apply or revert selected privacy settings."""
+    data = request.get_json()
+    setting_ids = data.get("settings", [])
+    action = data.get("action", "apply")
+
+    if not setting_ids:
+        return jsonify({"success": False, "error": "No settings selected"})
+
+    results = apply_privacy_settings(setting_ids, action)
+
+    success_count = sum(1 for r in results.values() if r.get("success"))
+    fail_count = sum(1 for r in results.values() if not r.get("success"))
+    reboot_required = any(
+        get_privacy_by_id(sid) and get_privacy_by_id(sid).get("reboot_required")
+        for sid in setting_ids
+    )
+
+    return jsonify({
+        "success": True,
+        "results": results,
+        "applied": success_count,
+        "failed": fail_count,
+        "action": action,
+        "reboot_required": reboot_required,
+    })
+
+
+@app.route("/api/privacy/allowlist/<setting_id>", methods=["GET"])
+def api_privacy_allowlist_get(setting_id):
+    """Get allowlist entries for a specific setting."""
+    setting = get_privacy_by_id(setting_id)
+    if not setting:
+        return jsonify({"error": "Setting not found"}), 404
+    if not setting.get("allowlist_support"):
+        return jsonify({"error": "Setting does not support allowlists"}), 400
+
+    allowlists = load_allowlists()
+    entries = allowlists.get(setting_id, [])
+    return jsonify({"setting_id": setting_id, "entries": entries})
+
+
+@app.route("/api/privacy/allowlist/<setting_id>", methods=["POST"])
+def api_privacy_allowlist_add(setting_id):
+    """Add an app to the allowlist for a setting."""
+    setting = get_privacy_by_id(setting_id)
+    if not setting:
+        return jsonify({"error": "Setting not found"}), 404
+    if not setting.get("allowlist_support"):
+        return jsonify({"error": "Setting does not support allowlists"}), 400
+
+    data = request.get_json()
+    app_name = data.get("name", "")
+    app_id = data.get("id", "")
+    app_type = data.get("type", "exe_path")
+
+    if not app_id:
+        return jsonify({"error": "App ID is required"}), 400
+
+    allowlists = load_allowlists()
+    if setting_id not in allowlists:
+        allowlists[setting_id] = []
+
+    # Check for duplicates
+    for entry in allowlists[setting_id]:
+        if entry.get("id") == app_id:
+            return jsonify({"error": "App already in allowlist"}), 409
+
+    new_entry = {"name": app_name, "id": app_id, "type": app_type}
+    allowlists[setting_id].append(new_entry)
+    save_allowlists(allowlists)
+
+    # Apply the registry entry
+    result = apply_allowlist_entries(setting_id, [new_entry], action="add")
+
+    return jsonify({
+        "success": True,
+        "entry": new_entry,
+        "registry_result": result,
+    })
+
+
+@app.route("/api/privacy/allowlist/<setting_id>/<path:app_id>", methods=["DELETE"])
+def api_privacy_allowlist_remove(setting_id, app_id):
+    """Remove an app from the allowlist for a setting."""
+    setting = get_privacy_by_id(setting_id)
+    if not setting:
+        return jsonify({"error": "Setting not found"}), 404
+
+    allowlists = load_allowlists()
+    if setting_id not in allowlists:
+        return jsonify({"error": "No allowlist entries for this setting"}), 404
+
+    # Find and remove the entry
+    entry_to_remove = None
+    new_entries = []
+    for entry in allowlists[setting_id]:
+        if entry.get("id") == app_id:
+            entry_to_remove = entry
+        else:
+            new_entries.append(entry)
+
+    if not entry_to_remove:
+        return jsonify({"error": "App not found in allowlist"}), 404
+
+    allowlists[setting_id] = new_entries
+    save_allowlists(allowlists)
+
+    # Remove the registry entry
+    result = apply_allowlist_entries(setting_id, [entry_to_remove], action="remove")
+
+    return jsonify({
+        "success": True,
+        "removed": entry_to_remove,
+        "registry_result": result,
+    })
+
+
+@app.route("/api/privacy/installed-apps")
+def api_privacy_installed_apps():
+    """List installed apps available for allowlist picker."""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCAN_PRIVACY_APPS_SCRIPT)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            apps = json.loads(result.stdout.strip())
+            return jsonify({"apps": apps, "total": len(apps)})
+        return jsonify({"apps": [], "total": 0, "error": result.stderr.strip()[:200] if result.stderr else "Scan failed"})
+    except Exception as e:
+        return jsonify({"apps": [], "total": 0, "error": str(e)[:200]})
 
 
 class Api:
