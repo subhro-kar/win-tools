@@ -1,6 +1,6 @@
 """
-WinTools - Windows System Management Dashboard
-A one-click desktop application for managing your Windows system.
+WinSuite - All-in-One Windows Management Suite
+A one-click desktop application for managing, tweaking, and hardening your Windows system.
 Similar to Chris Titus WinUtil - runs as a native window on your desktop.
 """
 
@@ -1440,7 +1440,7 @@ if __name__ == "__main__":
     time.sleep(1.5)
 
     print("\n" + "=" * 50)
-    print("  WinTools Dashboard")
+    print("  WinSuite - All-in-One Windows Suite")
     print("  Opening in native window...")
     print("=" * 50 + "\n")
 
@@ -1448,7 +1448,7 @@ if __name__ == "__main__":
     import uuid
     session_id = uuid.uuid4().hex[:8]
     window = webview.create_window(
-        "WinTools Dashboard",
+        "WinSuite - All-in-One Windows Suite",
         f"http://127.0.0.1:18080/?_={session_id}",
         width=1400,
         height=900,
@@ -1457,4 +1457,4 @@ if __name__ == "__main__":
         js_api=api,
     )
     webview.start()
-    print("WinTools closed.")
+    print("WinSuite closed.")
