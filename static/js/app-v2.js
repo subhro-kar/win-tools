@@ -116,6 +116,13 @@ function switchTab(tabId) {
             loadPrivacy();
         }
     }
+    if (tabId === "quicksetup") {
+        if (quicksetupData) {
+            renderQuickSetup(quicksetupData, quicksetupIsElevated);
+        } else {
+            loadQuickSetup();
+        }
+    }
 }
 
 // ── Toast Notifications ─────────────────────────────────────────
@@ -2528,6 +2535,8 @@ async function doWinOptionAction(selected, action) {
 
 let privacyData = null;
 let privacyIsElevated = false;
+let quicksetupData = null;
+let quicksetupIsElevated = false;
 
 async function loadPrivacy() {
     const el = document.getElementById("privacy-content");
@@ -2976,6 +2985,152 @@ async function loadInstalledAppsForAllowlist(settingId, selectEl) {
     } catch (err) {
         // App list loading failed - user can still add manually
     }
+}
+
+// ── Quick Setup Tab ────────────────────────────────────────────────
+
+function loadQuickSetup() {
+    fetch("/api/quicksetup")
+        .then(r => r.json())
+        .then(data => {
+            quicksetupData = data;
+            quicksetupIsElevated = data._meta?.is_admin ?? false;
+            delete data._meta;
+            renderQuickSetup(data, quicksetupIsElevated);
+        })
+        .catch(err => {
+            console.error("Error loading Quick Setup:", err);
+            document.getElementById("quicksetup-content").innerHTML =
+                '<div class="error">Failed to load Quick Setup settings. Make sure the app is running with appropriate permissions.</div>';
+        });
+}
+
+function renderQuickSetup(data, isElevated) {
+    const container = document.getElementById("quicksetup-content");
+    container.innerHTML = "";
+
+    // Admin banner
+    if (!isElevated) {
+        const banner = createElement("div", { className: "tweak-admin-banner" }, [
+            "⚠️ Running without admin privileges. Some settings may not be available. ",
+            createElement("a", { href: "#", className: "admin-restart" }, ["Restart as Administrator"])
+        ]);
+        container.appendChild(banner);
+    }
+
+    // Render each category as an accordion section (same pattern as Privacy tab)
+    for (const [catName, catData] of Object.entries(data)) {
+        const settings = catData.settings || [];
+        const enabledCount = settings.filter(s => s.current_state === true).length;
+
+        const section = createElement("div", { className: "privacy-category" }, [
+            createElement("div", { className: "privacy-category-header" }, [
+                createElement("span", { className: "privacy-category-icon" }, [catData.icon]),
+                createElement("span", { className: "privacy-category-name" }, [catName]),
+                createElement("span", { className: "privacy-category-count" }, [`${enabledCount}/${settings.length} enabled`]),
+                createElement("span", { className: "privacy-category-toggle" }, ["▼"])
+            ]),
+            createElement("div", { className: "privacy-category-desc" }, [catData.description])
+        ]);
+
+        const grid = createElement("div", { className: "privacy-cards" });
+
+        for (const setting of settings) {
+            const card = createQuickSetupCard(setting, isElevated);
+            grid.appendChild(card);
+        }
+
+        section.appendChild(grid);
+        container.appendChild(section);
+    }
+
+    // Add accordion toggle behavior (same as Privacy tab)
+    container.querySelectorAll(".privacy-category-header").forEach(header => {
+        header.addEventListener("click", () => {
+            const category = header.parentElement;
+            category.classList.toggle("open");
+            const toggle = header.querySelector(".privacy-category-toggle");
+            toggle.textContent = category.classList.contains("open") ? "▲" : "▼";
+        });
+    });
+}
+
+function createQuickSetupCard(setting, isElevated) {
+    const isOn = setting.current_state === true;
+    const isOff = setting.current_state === false;
+    const isUnknown = setting.current_state === null;
+
+    const card = createElement("div", {
+        className: `privacy-card ${isOn ? "active" : ""} ${setting.risk === "moderate" ? "risk-moderate" : ""} ${setting.risk === "risky" ? "risk-risky" : ""}`
+    });
+
+    if (setting.risk === "risky" || setting.risk === "moderate") {
+        card.style.borderLeftColor = setting.risk === "risky" ? "var(--red)" : "var(--orange)";
+    }
+
+    // Toggle switch (same pattern as Options/Privacy tabs)
+    const toggleLabel = createElement("label", { className: "wo-toggle" }, [
+        createElement("input", {
+            type: "checkbox",
+            className: "wo-toggle-input",
+            checked: isOn,
+            disabled: isUnknown && setting.requires_admin && !isElevated
+        }),
+        createElement("span", { className: "wo-toggle-slider" })
+    ]);
+
+    const toggleInput = toggleLabel.querySelector("input");
+
+    // Apply immediately on toggle change
+    toggleInput.addEventListener("change", () => {
+        const action = toggleInput.checked ? "apply" : "revert";
+        toggleInput.disabled = true;
+
+        fetch("/api/quicksetup/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ settings: [setting.id], action })
+        })
+        .then(r => r.json())
+        .then(result => {
+            toggleInput.disabled = false;
+            const r = result.results?.[setting.id];
+            if (r?.success) {
+                card.classList.toggle("active", toggleInput.checked);
+                showToast(`${setting.name}: ${action === "apply" ? "Applied" : "Reverted"}`, "success");
+            } else {
+                toggleInput.checked = !toggleInput.checked; // Revert toggle
+                showToast(`${setting.name}: ${r?.error || "Failed"}`, "error");
+            }
+        })
+        .catch(() => {
+            toggleInput.disabled = false;
+            toggleInput.checked = !toggleInput.checked; // Revert toggle
+            showToast(`${setting.name}: Network error`, "error");
+        });
+    });
+
+    // Info section
+    const info = createElement("div", { className: "privacy-card-info" }, [
+        createElement("div", { className: "privacy-card-header" }, [
+            createElement("span", { className: "privacy-card-name" }, [setting.name]),
+            setting.recommended === "on" ? createElement("span", { className: "badge badge-recommended" }, ["Recommended"]) : null,
+            setting.requires_admin ? createElement("span", { className: "badge badge-admin" }, ["Admin"]) : null,
+            setting.reboot_required ? createElement("span", { className: "badge wo-badge-reboot" }, ["Reboot"]) : null,
+            setting.risk === "moderate" ? createElement("span", { className: "badge wo-badge-mod" }, ["Moderate"]) : null,
+            setting.risk === "risky" ? createElement("span", { className: "badge wo-badge-risk" }, ["Risky"]) : null,
+        ].filter(Boolean)),
+        createElement("div", { className: "privacy-card-desc" }, [setting.description]),
+        setting.warning ? createElement("div", { className: "privacy-card-warning" }, [`⚠️ ${setting.warning}`]) : null,
+        isUnknown && setting.requires_admin && !isElevated
+            ? createElement("div", { className: "privacy-card-warning" }, ["Requires administrator privileges"])
+            : null,
+    ]);
+
+    card.appendChild(toggleLabel);
+    card.appendChild(info);
+
+    return card;
 }
 
 // ── Initialize ────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ from software_catalog import SOFTWARE_CATALOG, CATEGORY_ORDER, CATEGORY_COLORS
 from tweaks import TWEAK_CATEGORIES, get_tweak_by_id
 from winoptions import WINOPTION_CATEGORIES, get_winoption_by_id
 from privacy import PRIVACY_CATEGORIES, get_privacy_by_id
+from quicksetup import QUICKSETUP_CATEGORIES, get_quicksetup_by_id
 from migrate import (
     generate_key, encrypt_data, decrypt_data, create_bundle, extract_bundle,
     get_secrets_summary, test_r2_connection, upload_to_r2, download_from_r2,
@@ -32,6 +33,7 @@ SCAN_TWEAKS_SCRIPT = BASE_DIR / "scan-tweaks.ps1"
 SCAN_WINOPTIONS_SCRIPT = BASE_DIR / "scan-winoptions.ps1"
 SCAN_PRIVACY_SCRIPT = BASE_DIR / "scan-privacy.ps1"
 SCAN_PRIVACY_APPS_SCRIPT = BASE_DIR / "scan-privacy-apps.ps1"
+SCAN_QUICKSETUP_SCRIPT = BASE_DIR / "scan-quicksetup.ps1"
 APPS_JSON = DATA_DIR / "installed-apps.json"
 ALLOWLISTS_JSON = DATA_DIR / "allowlists.json"
 
@@ -46,6 +48,10 @@ _winoption_states_time = 0
 # Cached privacy states (refreshed on scan)
 _privacy_states_cache = {}
 _privacy_states_time = 0
+
+# Cached quick setup states (refreshed on scan)
+_quicksetup_states_cache = {}
+_quicksetup_states_time = 0
 
 app = Flask(
     __name__,
@@ -1044,6 +1050,101 @@ def scan_privacy_states():
     return {}
 
 
+def scan_quicksetup_states():
+    """Run scan-quicksetup.ps1 and return current states of Quick Setup settings."""
+    global _quicksetup_states_cache, _quicksetup_states_time
+    # Cache for 30 seconds
+    if _quicksetup_states_cache and (time.time() - _quicksetup_states_time) < 30:
+        return _quicksetup_states_cache
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCAN_QUICKSETUP_SCRIPT)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            states = json.loads(result.stdout.strip())
+            # Convert string "True"/"False" to bool
+            for key, val in states.items():
+                if isinstance(val, dict) and "is_on" in val:
+                    if isinstance(val["is_on"], str):
+                        val["is_on"] = val["is_on"].lower() == "true"
+            _quicksetup_states_cache = states
+            _quicksetup_states_time = time.time()
+            return states
+    except Exception as e:
+        print(f"[ERROR] scan-quicksetup-states: {e}")
+
+    return {}
+
+
+def apply_quicksetup_settings(setting_ids, action="apply"):
+    """Apply or revert Quick Setup settings."""
+    results = {}
+    commands = []
+
+    for sid in setting_ids:
+        setting = get_quicksetup_by_id(sid)
+        if not setting:
+            results[sid] = {"success": False, "error": "Unknown setting"}
+            continue
+
+        tweak_commands = []
+
+        # Build registry commands
+        for reg in setting.get("registry", []):
+            path = reg["path"]
+            name = reg["name"]
+            value = reg["value_on"] if action == "apply" else reg["value_off"]
+            reg_type = reg.get("type", "REG_DWORD")
+
+            # Classic context menu uses special handling (key creation/deletion)
+            if sid == "qs_classic_context_menu":
+                if action == "apply":
+                    # Create the key with empty default value
+                    tweak_commands.append(f'New-Item -Path "{path}" -Force | Out-Null; Set-ItemProperty -Path "{path}" -Name "(Default)" -Value "" -Force')
+                else:
+                    # Delete the key
+                    tweak_commands.append(f'Remove-Item -Path "HKCU:\\SOFTWARE\\Classes\\CLSID\\{{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}}" -Recurse -Force -ErrorAction SilentlyContinue')
+                continue
+
+            if reg_type == "REG_SZ":
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d "{value}" /f')
+            else:
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d {value} /f')
+
+        # Add explicit commands
+        cmd_key = "on" if action == "apply" else "off"
+        for cmd in setting.get("commands", {}).get(cmd_key, []):
+            tweak_commands.append(cmd)
+
+        if tweak_commands:
+            combined = "; ".join(tweak_commands)
+            commands.append((sid, combined, 30))
+        else:
+            results[sid] = {"success": True, "message": "No commands needed"}
+
+    # Run all commands
+    for sid, cmd, timeout in commands:
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            if r.returncode == 0:
+                results[sid] = {"success": True, "message": "Applied" if action == "apply" else "Reverted"}
+            else:
+                results[sid] = {"success": False, "error": r.stderr.strip()[:200]}
+        except Exception as e:
+            results[sid] = {"success": False, "error": str(e)[:200]}
+
+    # Invalidate cache so next scan reads fresh values
+    _quicksetup_states_cache = {}
+    _quicksetup_states_time = 0
+
+    return results
+
+
 def apply_privacy_settings(setting_ids, action="apply"):
     """Apply or revert selected privacy settings."""
     results = {}
@@ -1200,6 +1301,70 @@ def apply_allowlist_entries(setting_id, entries, action="add"):
             return {"success": False, "error": str(e)[:200]}
 
     return {"success": True, "message": "No changes needed"}
+
+
+# ── Quick Setup Flask Routes ──────────────────────────────────────────────
+
+@app.route("/api/quicksetup")
+def api_quicksetup():
+    """Return all Quick Setup categories with current states."""
+    states = scan_quicksetup_states()
+    result = {}
+    for cat_name, cat_data in QUICKSETUP_CATEGORIES.items():
+        result[cat_name] = {
+            "icon": cat_data["icon"],
+            "description": cat_data["description"],
+            "settings": [],
+        }
+        for setting in cat_data["settings"]:
+            state = states.get(setting["id"], {"is_on": None, "current_value": None})
+            entry = {
+                "id": setting["id"],
+                "name": setting["name"],
+                "description": setting["description"],
+                "recommended": setting.get("recommended", "off"),
+                "requires_admin": setting.get("requires_admin", False),
+                "reboot_required": setting.get("reboot_required", False),
+                "risk": setting.get("risk", "safe"),
+                "warning": setting.get("warning", ""),
+                "current_state": state.get("is_on"),
+                "current_value": state.get("current_value"),
+            }
+            result[cat_name]["settings"].append(entry)
+
+    # Check if running as admin
+    try:
+        import ctypes
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        is_admin = False
+
+    result["_meta"] = {"is_admin": is_admin}
+    return jsonify(result)
+
+
+@app.route("/api/quicksetup/apply", methods=["POST"])
+def api_quicksetup_apply():
+    """Apply or revert Quick Setup settings. Body: {"settings": ["qs_snip_autosave", ...], "action": "apply"|"revert"}"""
+    data = request.json or {}
+    setting_ids = data.get("settings", [])
+    action = data.get("action", "apply")
+
+    if not setting_ids:
+        return jsonify({"success": False, "error": "No settings selected"})
+
+    results = apply_quicksetup_settings(setting_ids, action)
+
+    success_count = sum(1 for v in results.values() if v.get("success"))
+    fail_count = len(results) - success_count
+
+    return jsonify({
+        "success": True,
+        "results": results,
+        "applied": success_count,
+        "failed": fail_count,
+        "action": action,
+    })
 
 
 # ── Privacy & Security Flask Routes ──────────────────────────────────────
