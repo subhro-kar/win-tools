@@ -67,8 +67,8 @@ foreach ($path in $uninstallPaths) {
 
         # Clean up the exe path
         if (![string]::IsNullOrWhiteSpace($exe)) {
-            # Remove quotes and arguments
-            $exe = $exe -replace '^"', '' -replace '"$', '' -replace '\s*/.*$', ''
+            # Remove quotes, arguments, and icon index (e.g. "C:\app.exe,0")
+            $exe = $exe -replace '^"', '' -replace '"$', '' -replace '\s*/.*$', '' -replace ',\d+$', ''
             if (Test-Path $exe -ErrorAction SilentlyContinue) {
                 $exe = (Resolve-Path $exe -ErrorAction SilentlyContinue).Path
             }
@@ -86,6 +86,6 @@ foreach ($path in $uninstallPaths) {
     }
 }
 
-# Sort by name and output
+# Sort by name and output (force array for ConvertTo-Json)
 $apps = $apps | Sort-Object { $_.name }
-$apps | ConvertTo-Json -Depth 5
+if ($apps.Count -le 1) { ,@($apps) | ConvertTo-Json -Depth 5 } else { $apps | ConvertTo-Json -Depth 5 }

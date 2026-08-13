@@ -333,7 +333,7 @@ WINOPTION_CATEGORIES = {
                 "commands": {
                     "on": [
                         "Enable-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue",
-                        "New-NetFirewallRule -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -LocalPort 22 -ErrorAction SilentlyContinue",
+                        "if (-not (Get-NetFirewallRule -DisplayName 'OpenSSH Server (sshd)' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -LocalPort 22 -ErrorAction SilentlyContinue }",
                     ],
                     "off": [
                         "Disable-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue",
@@ -354,7 +354,7 @@ WINOPTION_CATEGORIES = {
                 "commands": {
                     "on": [
                         "Enable-NetFirewallRule -DisplayGroup 'FTP Server' -ErrorAction SilentlyContinue",
-                        "New-NetFirewallRule -DisplayName 'FTP Inbound' -Enabled True -Direction Inbound -Protocol TCP -LocalPort 21 -ErrorAction SilentlyContinue",
+                        "if (-not (Get-NetFirewallRule -DisplayName 'FTP Inbound' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName 'FTP Inbound' -Enabled True -Direction Inbound -Protocol TCP -LocalPort 21 -ErrorAction SilentlyContinue }",
                     ],
                     "off": [
                         "Disable-NetFirewallRule -DisplayGroup 'FTP Server' -ErrorAction SilentlyContinue",
@@ -515,7 +515,7 @@ WINOPTION_CATEGORIES = {
                 "description": "Delete files in Windows Temp and user Temp folders",
                 "commands": {
                     "run": [
-                        "Remove-Item -Path '$env:TEMP\\*' -Recurse -Force -ErrorAction SilentlyContinue",
+                        "Remove-Item -Path \"$env:TEMP\\*\" -Recurse -Force -ErrorAction SilentlyContinue",
                         "Remove-Item -Path 'C:\\Windows\\Temp\\*' -Recurse -Force -ErrorAction SilentlyContinue",
                     ],
                 },
