@@ -42,12 +42,16 @@ function Test-RegOnAdmin {
         $ValueOn
     )
     try {
-        $val = Get-RegState -Path $Path -Name $Name -ValueOn $ValueOn
+        # Use -ErrorAction Stop so UnauthorizedAccessException is catchable
+        $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction Stop).$Name
         if ($null -eq $val) { return @{ found = $false; is_on = $null; current = $null } }
         $match = ("$val" -eq "$ValueOn")
         return @{ found = $true; is_on = $match; current = $val }
     } catch [System.UnauthorizedAccessException] {
         return @{ found = $false; is_on = $null; current = "need_admin" }
+    } catch {
+        # Other errors (key not found, etc.) — treat as not set
+        return @{ found = $false; is_on = $null; current = $null }
     }
 }
 
@@ -598,8 +602,13 @@ Set-SingleHkcu -Id "priv_show_file_extensions" -Path "HKCU:\SOFTWARE\Microsoft\W
 # priv_show_protected_os_files
 Set-SingleHkcu -Id "priv_show_protected_os_files" -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowSuperHidden" -ValueOn 1
 
-# priv_classic_context_menu (REG_SZ, value_on is empty string)
-Set-SingleHkcu -Id "priv_classic_context_menu" -Path "HKCU:\SOFTWARE\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" -Name "" -ValueOn ""
+# priv_classic_context_menu — enabled when key exists (default value is empty string)
+$privCtxKey = "HKCU:\SOFTWARE\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"
+if (Test-Path -Path $privCtxKey) {
+    $output["priv_classic_context_menu"] = @{ is_on = $true; current_value = "enabled" }
+} else {
+    $output["priv_classic_context_menu"] = @{ is_on = $false; current_value = "disabled" }
+}
 
 # priv_compact_mode
 Set-SingleHkcu -Id "priv_compact_mode" -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "UseCompactMode" -ValueOn 1

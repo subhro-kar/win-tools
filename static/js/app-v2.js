@@ -2385,7 +2385,7 @@ function renderWinOptions(data, isElevated) {
             } else {
                 // Toggle switch — applies immediately on change
                 const toggle = createElement("label", { className: "wo-toggle" });
-                const input = createElement("input", { type: "checkbox", className: "wo-toggle-input", id: `wo-${option.id}` });
+                const input = createElement("input", { type: "checkbox", className: "wo-toggle-input", id: `wo-${option.id}`, "aria-label": option.name });
                 input.value = option.id;
                 input.checked = isOn;
                 input.dataset.type = "toggle";
@@ -2641,6 +2641,7 @@ function renderPrivacy(data, isElevated) {
                 type: "checkbox",
                 className: "wo-toggle-input",
                 id: `priv-${setting.id}`,
+                "aria-label": setting.name,
             });
             toggleInput.checked = setting.current_state === true;
             toggleInput.dataset.id = setting.id;
@@ -2865,7 +2866,13 @@ async function showAllowlistDialog(settingId, settingName) {
             });
             const data = await res.json();
             if (data.success) {
-                showToast(`Added "${appName}" to exceptions`, "success");
+                // Check if the registry write actually succeeded
+                const regResult = data.registry_result;
+                if (regResult && !regResult.success) {
+                    showToast(`Registry error: ${regResult.error || "Failed to write"}`, "error");
+                } else {
+                    showToast(`Added "${appName}" to exceptions`, "success");
+                }
                 // Reload the allowlist
                 loadAllowlistEntries(settingId, entriesContainer);
             } else {
@@ -3074,7 +3081,8 @@ function createQuickSetupCard(setting, isElevated) {
             type: "checkbox",
             className: "wo-toggle-input",
             checked: isOn,
-            disabled: isUnknown && setting.requires_admin && !isElevated
+            disabled: isUnknown && setting.requires_admin && !isElevated,
+            "aria-label": setting.name,
         }),
         createElement("span", { className: "wo-toggle-slider" })
     ]);

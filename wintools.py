@@ -378,6 +378,7 @@ def apply_winoptions(option_ids, action="apply"):
             results[oid] = {"success": False, "error": str(e)[:200]}
 
     # Invalidate cache
+    global _winoption_states_cache, _winoption_states_time
     _winoption_states_cache = {}
     _winoption_states_time = 0
 
@@ -504,7 +505,7 @@ _winget_installed_cache_time = 0
 def get_winget_installed():
     """Return cached set of installed winget package IDs (refreshed every 60 seconds)."""
     global _winget_installed_cache, _winget_installed_cache_time
-    if _winget_installed_cache and (time.time() - _winget_installed_cache_time) < 60:
+    if _winget_installed_cache is not None and (time.time() - _winget_installed_cache_time) < 60:
         return _winget_installed_cache
     _winget_installed_cache = _get_winget_installed_ids()
     _winget_installed_cache_time = time.time()
@@ -1139,6 +1140,7 @@ def apply_quicksetup_settings(setting_ids, action="apply"):
             results[sid] = {"success": False, "error": str(e)[:200]}
 
     # Invalidate cache so next scan reads fresh values
+    global _quicksetup_states_cache, _quicksetup_states_time
     _quicksetup_states_cache = {}
     _quicksetup_states_time = 0
 
@@ -1221,6 +1223,7 @@ def apply_privacy_settings(setting_ids, action="apply"):
             results[sid] = {"success": False, "error": str(e)[:200]}
 
     # Invalidate cache
+    global _privacy_states_cache, _privacy_states_time
     _privacy_states_cache = {}
     _privacy_states_time = 0
 
@@ -1245,6 +1248,17 @@ def save_allowlists(data):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
+def _sanitize_reg_value(value):
+    """Sanitize a value to prevent command injection in registry commands.
+
+    Strips characters that could break out of quoted arguments in reg.exe commands
+    (quotes, semicolons, backticks, dollar signs, pipes, ampersands, etc.).
+    """
+    import re
+    # Remove characters that could escape quoting or chain commands in PowerShell/cmd.exe
+    return re.sub(r'[;"`|$&<>!()\n\r]', '', str(value))
+
+
 def apply_allowlist_entries(setting_id, entries, action="add"):
     """Apply or remove per-app allowlist registry entries for a setting."""
     setting = get_privacy_by_id(setting_id)
@@ -1255,8 +1269,6 @@ def apply_allowlist_entries(setting_id, entries, action="add"):
     if not base_path:
         return {"success": False, "error": "No allowlist registry path defined"}
 
-    # Convert HKCU\ to HKCU:\ for PowerShell
-    ps_base = base_path.replace(r"HKCU\\", "HKCU:\\").replace(r"HKLM\\", "HKLM:\\").replace("\\", "\\\\")
     # Actually use reg.exe format
     reg_base = base_path
 
@@ -1265,9 +1277,12 @@ def apply_allowlist_entries(setting_id, entries, action="add"):
 
     commands = []
     for entry in entries:
-        app_id = entry.get("id", "")
+        app_id = _sanitize_reg_value(entry.get("id", ""))
         app_type = entry.get("type", "exe_path")
         app_name = entry.get("name", app_id)
+
+        if not app_id:
+            continue
 
         if action == "add":
             if app_type == "package_family":
