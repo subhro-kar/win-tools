@@ -102,6 +102,20 @@ function switchTab(tabId) {
             loadTweaks();
         }
     }
+    if (tabId === "winoptions") {
+        if (winoptionsData) {
+            renderWinOptions(winoptionsData, winoptionsIsElevated);
+        } else {
+            loadWinOptions();
+        }
+    }
+    if (tabId === "privacy") {
+        if (privacyData) {
+            renderPrivacy(privacyData, privacyIsElevated);
+        } else {
+            loadPrivacy();
+        }
+    }
 }
 
 // ── Toast Notifications ─────────────────────────────────────────
@@ -2222,6 +2236,746 @@ function selectAllTweaks(checked) {
         cb.indeterminate = false;
     });
     updateTweakCount();
+}
+
+// ── Windows Options & Tools ────────────────────────────────────────────
+
+let winoptionsData = null;
+let winoptionsIsElevated = false;
+
+async function loadWinOptions() {
+    const el = document.getElementById("winoptions-content");
+    const resultEl = document.getElementById("winoptions-result");
+    resultEl.textContent = "";
+    showLoading(el, "Scanning Windows options...");
+
+    try {
+        const res = await fetch(`${API}/winoptions`);
+        const rawData = await res.json();
+        const isElevated = rawData._meta && rawData._meta.is_admin;
+        delete rawData._meta;
+        winoptionsData = rawData;
+        winoptionsIsElevated = isElevated;
+        renderWinOptions(winoptionsData, isElevated);
+    } catch (err) {
+        el.textContent = "";
+        el.appendChild(createElement("div", { className: "loading" }, [`Error: ${err.message}`]));
+    }
+}
+
+function renderWinOptions(data, isElevated) {
+    const el = document.getElementById("winoptions-content");
+    el.textContent = "";
+
+    if (!isElevated) {
+        const banner = createElement("div", { className: "wo-banner" }, [
+            "⚠️ Not running as Administrator — most options require admin rights. Right-click WinTools and select \"Run as Administrator\"."
+        ]);
+        el.appendChild(banner);
+    }
+
+    for (const [catName, catData] of Object.entries(data)) {
+        const section = createElement("div", { className: "wo-section" });
+        const header = createElement("div", { className: "wo-section-header" });
+        const icon = catData.icon || "⚙";
+
+        header.appendChild(createElement("span", { className: "wo-section-icon" }, [icon]));
+        header.appendChild(createElement("span", { className: "wo-section-title" }, [catName]));
+        header.appendChild(createElement("span", { className: "wo-section-desc" }, [catData.description]));
+        section.appendChild(header);
+
+        const list = createElement("div", { className: "wo-list" });
+
+        for (const option of catData.options) {
+            const isAction = option.type === "action";
+            const isOn = option.current_state === true;
+            const row = createElement("div", {
+                className: `wo-row${isOn ? " wo-on" : ""}${isAction ? " wo-action" : ""}`,
+            });
+            row.dataset.id = option.id;
+            row.dataset.type = option.type;
+            row.dataset.risk = option.risk || "safe";
+            if (option.reboot_required) row.dataset.reboot = "1";
+            if (option.requires_admin) row.dataset.admin = "1";
+
+            // Left side: name + description
+            const left = createElement("div", { className: "wo-left" });
+            const nameLine = createElement("div", { className: "wo-name-line" });
+            nameLine.appendChild(createElement("span", { className: "wo-name" }, [option.name]));
+
+            // Compact badges
+            const badges = createElement("span", { className: "wo-badges" });
+            if (option.recommended === "on") badges.appendChild(createElement("span", { className: "wo-badge wo-badge-rec" }, ["On"]));
+            if (option.reboot_required) badges.appendChild(createElement("span", { className: "wo-badge wo-badge-reboot" }, ["Reboot"]));
+            if (isAction) badges.appendChild(createElement("span", { className: "wo-badge wo-badge-run" }, ["Action"]));
+            if (option.risk === "risky") badges.appendChild(createElement("span", { className: "wo-badge wo-badge-risk" }, ["⚠ Risky"]));
+            if (option.risk === "moderate") badges.appendChild(createElement("span", { className: "wo-badge wo-badge-mod" }, ["Moderate"]));
+            if (option.requires_admin) badges.appendChild(createElement("span", { className: "wo-badge wo-badge-admin" }, ["Admin"]));
+            nameLine.appendChild(badges);
+            left.appendChild(nameLine);
+
+            left.appendChild(createElement("div", { className: "wo-desc" }, [option.description]));
+
+            if (option.warning) {
+                left.appendChild(createElement("div", { className: "wo-warning" }, [option.warning]));
+            }
+
+            // State line
+            const stateLine = createElement("div", { className: "wo-state" });
+            if (isAction) {
+                stateLine.appendChild(createElement("span", { className: "wo-state-action" }, ["One-time action"]));
+            } else if (isOn) {
+                stateLine.appendChild(createElement("span", { className: "wo-state-on" }, ["Enabled"]));
+            } else if (option.current_state === false) {
+                stateLine.appendChild(createElement("span", { className: "wo-state-off" }, ["Disabled"]));
+            } else if (option.current_value === "Not available" || option.current_value === "need_admin") {
+                stateLine.appendChild(createElement("span", { className: "wo-state-unknown" }, ["Not available"]));
+            } else {
+                stateLine.appendChild(createElement("span", { className: "wo-state-unknown" }, ["Default"]));
+            }
+            if (option.current_value && option.current_value !== "action" && option.current_value !== "Not available" && option.current_value !== "need_admin") {
+                stateLine.appendChild(createElement("span", { className: "wo-state-val" }, [option.current_value]));
+            }
+            left.appendChild(stateLine);
+
+            // Right side: toggle switch or run button
+            const right = createElement("div", { className: "wo-right" });
+            if (isAction) {
+                const runBtn = createElement("button", { className: "wo-run-btn", title: option.name });
+                runBtn.textContent = "▶ Run";
+                runBtn.addEventListener("click", async () => {
+                    runBtn.disabled = true;
+                    runBtn.textContent = "Running…";
+                    try {
+                        const res = await fetch(`${API}/winoptions/apply`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ options: [option.id], action: "apply" }),
+                        });
+                        const result = await res.json();
+                        const r = result.results[option.id] || {};
+                        if (r.success) {
+                            runBtn.textContent = "✓ Done";
+                            runBtn.classList.add("wo-run-done");
+                            showToast(`${option.name}: ${r.message || "Completed"}`, "success");
+                        } else {
+                            runBtn.textContent = "✗ Failed";
+                            runBtn.classList.add("wo-run-fail");
+                            showToast(`${option.name}: ${r.error || "Failed"}`, "error");
+                        }
+                    } catch (err) {
+                        runBtn.textContent = "✗ Error";
+                        runBtn.classList.add("wo-run-fail");
+                        showToast(`${option.name}: ${err.message}`, "error");
+                    }
+                    setTimeout(() => {
+                        runBtn.disabled = false;
+                        runBtn.textContent = "▶ Run";
+                        runBtn.classList.remove("wo-run-done", "wo-run-fail");
+                    }, 3000);
+                });
+                right.appendChild(runBtn);
+            } else {
+                // Toggle switch — applies immediately on change
+                const toggle = createElement("label", { className: "wo-toggle" });
+                const input = createElement("input", { type: "checkbox", className: "wo-toggle-input", id: `wo-${option.id}` });
+                input.value = option.id;
+                input.checked = isOn;
+                input.dataset.type = "toggle";
+                input.dataset.risk = option.risk || "safe";
+                input.dataset.rebootRequired = option.reboot_required ? "1" : "0";
+                input.dataset.optionId = option.id;
+                if (option.warning) input.dataset.warning = option.warning;
+                input.dataset.currentState = isOn ? "on" : option.current_state === false ? "off" : "unknown";
+
+                // Apply immediately when toggled
+                input.addEventListener("change", async function() {
+                    const oid = this.dataset.optionId;
+                    const wantOn = this.checked;
+                    const action = wantOn ? "apply" : "revert";
+                    const row = this.closest(".wo-row");
+
+                    // Show loading on the toggle
+                    this.disabled = true;
+                    row.classList.add("wo-loading");
+
+                    try {
+                        const res = await fetch(`${API}/winoptions/apply`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ options: [oid], action: action }),
+                        });
+                        const data = await res.json();
+                        const r = data.results[oid] || {};
+                        if (r.success) {
+                            row.classList.toggle("wo-on", wantOn);
+                            this.checked = wantOn;
+                            // Update state text
+                            const stateEl = row.querySelector(".wo-state-on, .wo-state-off, .wo-state-unknown");
+                            if (stateEl) {
+                                stateEl.className = wantOn ? "wo-state-on" : "wo-state-off";
+                                stateEl.textContent = wantOn ? "Enabled" : "Disabled";
+                            }
+                            const verb = wantOn ? "Enabled" : "Disabled";
+                            showToast(`${option.name}: ${verb}`, "success");
+                            if (data.reboot_required) {
+                                showToast("💻 Reboot required for some changes", "info");
+                            }
+                            // Rescan after a short delay
+                            setTimeout(() => loadWinOptions(), 1500);
+                        } else {
+                            // Revert the toggle visually
+                            this.checked = !wantOn;
+                            row.classList.toggle("wo-on", this.checked);
+                            showToast(`${option.name}: ${r.error || "Failed"}`, "error");
+                        }
+                    } catch (err) {
+                        this.checked = !wantOn;
+                        row.classList.toggle("wo-on", this.checked);
+                        showToast(`${option.name}: ${err.message}`, "error");
+                    }
+                    this.disabled = false;
+                    row.classList.remove("wo-loading");
+                });
+
+                const slider = createElement("span", { className: "wo-toggle-slider" });
+                toggle.append(input, slider);
+                right.appendChild(toggle);
+            }
+
+            row.append(left, right);
+            list.appendChild(row);
+        }
+
+        section.appendChild(list);
+        el.appendChild(section);
+    }
+}
+
+async function applySelectedWinOptions() {
+    // Kept for compatibility but toggles apply immediately now
+    showToast("Toggle switches apply automatically when flipped", "info");
+}
+
+async function revertSelectedWinOptions() {
+    // Kept for compatibility but toggles apply immediately now
+    showToast("Toggle switches apply automatically — just flip them off", "info");
+}
+
+async function runSelectedWinOptions() {
+    showToast("Use the ▶ Run button on each action item", "info");
+}
+
+function selectAllWinOptions(checked) {
+    // No longer needed — toggles are instant
+}
+
+function updateWinOptionCount() {
+    // No longer needed — no batch buttons
+}
+
+async function doWinOptionAction(selected, action) {
+    const resultEl = document.getElementById("winoptions-result");
+    resultEl.textContent = "";
+
+    const verb = action === "revert" ? "Reverting" : "Applying";
+    resultEl.appendChild(createElement("div", { className: "loading" }, [`${verb} ${selected.length} option(s)...`]));
+
+    try {
+        const res = await fetch(`${API}/winoptions/apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ options: selected, action: action }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            resultEl.textContent = "";
+            const verbPast = action === "revert" ? "Reverted" : "Applied";
+            const card = createElement("div", { className: "wo-result success" });
+            card.appendChild(createElement("h4", {}, [`${verbPast} ${data.applied} option(s)`]));
+            if (data.failed > 0) {
+                card.appendChild(createElement("p", { style: "color:var(--orange);margin-top:4px;" }, [
+                    `${data.failed} option(s) failed`
+                ]));
+            }
+            if (data.reboot_required) {
+                card.appendChild(createElement("div", { className: "wo-reboot-warning" }, [
+                    "💻 A reboot is required for some changes to take effect."
+                ]));
+            }
+            const details = createElement("div", { className: "wo-result-details" });
+            for (const [id, result] of Object.entries(data.results)) {
+                const item = createElement("div", { className: `wo-result-item${result.success ? "" : " failed"}` });
+                item.textContent = `${id}: ${result.success ? "✓ " + (result.message || "OK") : "✗ " + (result.error || "Failed")}`;
+                details.appendChild(item);
+            }
+            card.appendChild(details);
+            resultEl.appendChild(card);
+            showToast(`${verbPast} ${data.applied} option(s)!`, "success");
+            setTimeout(() => loadWinOptions(), 2000);
+        } else {
+            showToast(`Error: ${data.error || "Unknown error"}`, "error");
+            resultEl.textContent = "";
+        }
+    } catch (err) {
+        showToast(`Error: ${err.message}`, "error");
+        resultEl.textContent = "";
+    }
+}
+
+// ── Privacy & Security Tab ─────────────────────────────────────────
+
+let privacyData = null;
+let privacyIsElevated = false;
+
+async function loadPrivacy() {
+    const el = document.getElementById("privacy-content");
+    const resultEl = document.getElementById("privacy-result");
+    resultEl.textContent = "";
+    showLoading(el, "Scanning privacy settings...");
+
+    try {
+        const res = await fetch(`${API}/privacy`);
+        const rawData = await res.json();
+
+        // Extract admin status from meta
+        const isElevated = rawData._meta && rawData._meta.is_admin;
+        delete rawData._meta;
+
+        privacyData = rawData;
+        privacyIsElevated = isElevated;
+        renderPrivacy(privacyData, isElevated);
+    } catch (err) {
+        el.textContent = "";
+        el.appendChild(createElement("div", { className: "loading" }, [`Error: ${err.message}`]));
+    }
+}
+
+function renderPrivacy(data, isElevated) {
+    const el = document.getElementById("privacy-content");
+    el.textContent = "";
+
+    // Show admin warning if not elevated
+    if (!isElevated) {
+        const banner = createElement("div", { className: "tweak-admin-banner" }, [
+            "⚠️ Not running as Administrator — some settings require HKLM access and will fail. Right-click WinTools and select \"Run as Administrator\" for full access."
+        ]);
+        el.appendChild(banner);
+    }
+
+    // Search bar
+    const searchInput = document.getElementById("privacy-search");
+    if (searchInput) {
+        searchInput.oninput = () => filterPrivacySettings(searchInput.value);
+    }
+
+    for (const [catName, catData] of Object.entries(data)) {
+        if (catName === "_meta") continue;
+        const section = createElement("div", { className: "privacy-category" });
+        section.dataset.category = catName;
+
+        // Category header (accordion)
+        const header = createElement("div", { className: "privacy-category-header" });
+        const icon = catData.icon || "🔒";
+        const settings = catData.settings || catData.tweaks || [];
+        const enabledCount = settings.filter(s => s.current_state === true).length;
+        const totalCount = settings.length;
+
+        header.appendChild(createElement("span", { className: "privacy-category-icon" }, [icon]));
+        header.appendChild(createElement("span", { className: "privacy-category-name" }, [catName]));
+        header.appendChild(createElement("span", { className: "privacy-category-count" }, [`${enabledCount}/${totalCount} enabled`]));
+        header.appendChild(createElement("span", { className: "privacy-category-chevron" }, ["▸"]));
+
+        header.addEventListener("click", () => {
+            const body = section.querySelector(".privacy-category-body");
+            const chevron = header.querySelector(".privacy-category-chevron");
+            if (body.style.maxHeight && body.style.maxHeight !== "0px") {
+                body.style.maxHeight = "0px";
+                chevron.textContent = "▸";
+                header.classList.remove("expanded");
+            } else {
+                body.style.maxHeight = body.scrollHeight + "px";
+                chevron.textContent = "▾";
+                header.classList.add("expanded");
+            }
+        });
+        section.appendChild(header);
+
+        // Category body
+        const body = createElement("div", { className: "privacy-category-body" });
+        body.style.maxHeight = "0px";
+        body.style.overflow = "hidden";
+        body.style.transition = "max-height 0.3s ease";
+
+        // Description
+        if (catData.description) {
+            body.appendChild(createElement("p", { className: "privacy-category-desc" }, [catData.description]));
+        }
+
+        // Settings grid
+        const grid = createElement("div", { className: "privacy-grid" });
+
+        for (const setting of settings) {
+            const riskClass = setting.risk || "safe";
+            const card = createElement("div", {
+                className: `privacy-card${setting.current_state === true ? " active" : ""} risk-${riskClass}`,
+                dataset: { id: setting.id },
+            });
+
+            // Top row: toggle + info
+            const topRow = createElement("div", { className: "privacy-top" });
+
+            // Toggle switch (like wo-toggle)
+            const toggleLabel = createElement("label", { className: "wo-toggle" });
+            const toggleInput = createElement("input", {
+                type: "checkbox",
+                className: "wo-toggle-input",
+                id: `priv-${setting.id}`,
+            });
+            toggleInput.checked = setting.current_state === true;
+            toggleInput.dataset.id = setting.id;
+            toggleInput.dataset.requiresAdmin = setting.requires_admin ? "1" : "0";
+            toggleInput.dataset.risk = riskClass;
+            if (setting.warning) toggleInput.dataset.warning = setting.warning;
+
+            toggleInput.addEventListener("change", async () => {
+                const action = toggleInput.checked ? "apply" : "revert";
+                await togglePrivacySetting(setting.id, action, toggleInput, card);
+            });
+
+            const toggleSlider = createElement("span", { className: "wo-toggle-slider" });
+            toggleLabel.append(toggleInput, toggleSlider);
+
+            // Info section
+            const info = createElement("div", { className: "privacy-info" });
+            const nameRow = createElement("div", { className: "privacy-name-row" });
+            nameRow.appendChild(createElement("span", { className: "privacy-name" }, [setting.name]));
+
+            // Badges
+            const badges = createElement("span", { className: "tweak-badges" });
+            if (setting.recommended === "on" && setting.current_state !== true) {
+                badges.appendChild(createElement("span", { className: "badge badge-recommended" }, ["Recommended"]));
+            }
+            const riskLabels = { safe: "Safe", moderate: "Moderate", risky: "Risky" };
+            const riskEmojis = { safe: "✅", moderate: "⚠️", risky: "🔴" };
+            badges.appendChild(createElement("span", { className: `badge badge-risk-${riskClass}` }, [`${riskEmojis[riskClass] || ""} ${riskLabels[riskClass] || "Safe"}`]));
+            if (setting.requires_admin) {
+                badges.appendChild(createElement("span", { className: "badge badge-admin" }, ["Admin"]));
+            }
+            if (setting.allowlist_support) {
+                badges.appendChild(createElement("span", { className: "badge badge-allowlist" }, ["⚙ Exceptions"]));
+            }
+            nameRow.appendChild(badges);
+            info.appendChild(nameRow);
+
+            info.appendChild(createElement("div", { className: "privacy-desc" }, [setting.description]));
+
+            if (setting.warning) {
+                info.appendChild(createElement("div", { className: "tweak-warning" }, [setting.warning]));
+            }
+
+            // State indicator
+            const stateRow = createElement("div", { className: "tweak-state" });
+            if (setting.current_state === true) {
+                stateRow.appendChild(createElement("span", { className: "state-on" }, ["✓ Enabled"]));
+            } else if (setting.current_state === false) {
+                stateRow.appendChild(createElement("span", { className: "state-off" }, ["✗ Disabled"]));
+            } else if (setting.current_value === "need_admin") {
+                stateRow.appendChild(createElement("span", { className: "state-unknown" }, ["🔒 Needs Admin to detect"]));
+            } else {
+                stateRow.appendChild(createElement("span", { className: "state-unknown" }, ["Not set (default)"]));
+            }
+            info.appendChild(stateRow);
+
+            // Allowlist button
+            if (setting.allowlist_support) {
+                const allowlistBtn = createElement("button", {
+                    className: "btn btn-sm privacy-allowlist-btn",
+                    title: "Manage app exceptions",
+                }, ["⚙ Exceptions"]);
+                allowlistBtn.addEventListener("click", () => showAllowlistDialog(setting.id, setting.name));
+                info.appendChild(allowlistBtn);
+            }
+
+            topRow.append(toggleLabel, info);
+            card.appendChild(topRow);
+            grid.appendChild(card);
+        }
+
+        body.appendChild(grid);
+        section.appendChild(body);
+        el.appendChild(section);
+    }
+
+    // Auto-expand first category
+    const firstHeader = el.querySelector(".privacy-category-header");
+    if (firstHeader) {
+        firstHeader.click();
+    }
+}
+
+async function togglePrivacySetting(id, action, toggleInput, card) {
+    toggleInput.disabled = true;
+    const resultEl = document.getElementById("privacy-result");
+
+    try {
+        const res = await fetch(`${API}/privacy/apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ settings: [id], action: action }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            const result = data.results[id] || {};
+            if (result.success) {
+                showToast(`${id}: ${result.message || (action === "apply" ? "Enabled" : "Disabled")}`, "success");
+                // Update card state locally
+                if (action === "apply") {
+                    card.classList.add("active");
+                } else {
+                    card.classList.remove("active");
+                }
+                // Update state text
+                const stateRow = card.querySelector(".tweak-state");
+                if (stateRow) {
+                    stateRow.textContent = "";
+                    stateRow.appendChild(createElement("span", { className: action === "apply" ? "state-on" : "state-off" }, [action === "apply" ? "✓ Enabled" : "✗ Disabled"]));
+                }
+                // Update the cached data so re-renders reflect the change
+                if (privacyData) {
+                    for (const [catName, catData] of Object.entries(privacyData)) {
+                        if (catName === "_meta") continue;
+                        for (const setting of (catData.settings || [])) {
+                            if (setting.id === id) {
+                                setting.current_state = action === "apply";
+                                setting.current_value = action === "apply" ? "on" : "off";
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                showToast(`${id}: ${result.error || "Failed"}`, "error");
+                // Revert toggle
+                toggleInput.checked = !toggleInput.checked;
+            }
+            if (data.reboot_required) {
+                showToast("💻 A reboot may be required for some changes to take effect", "info");
+            }
+        } else {
+            showToast(`Error: ${data.error || "Unknown error"}`, "error");
+            toggleInput.checked = !toggleInput.checked;
+        }
+    } catch (err) {
+        showToast(`Error: ${err.message}`, "error");
+        toggleInput.checked = !toggleInput.checked;
+    }
+
+    toggleInput.disabled = false;
+}
+
+function filterPrivacySettings(query) {
+    const q = query.toLowerCase().trim();
+    const categories = document.querySelectorAll(".privacy-category");
+
+    categories.forEach(cat => {
+        const cards = cat.querySelectorAll(".privacy-card");
+        let visibleCount = 0;
+
+        cards.forEach(card => {
+            const name = card.querySelector(".privacy-name")?.textContent?.toLowerCase() || "";
+            const desc = card.querySelector(".privacy-desc")?.textContent?.toLowerCase() || "";
+            if (!q || name.includes(q) || desc.includes(q)) {
+                card.style.display = "";
+                visibleCount++;
+            } else {
+                card.style.display = "none";
+            }
+        });
+
+        // Hide category if no visible cards
+        if (visibleCount === 0 && q) {
+            cat.style.display = "none";
+        } else {
+            cat.style.display = "";
+            // Auto-expand if searching and has matches
+            if (q && visibleCount > 0) {
+                const body = cat.querySelector(".privacy-category-body");
+                const header = cat.querySelector(".privacy-category-header");
+                if (body && body.style.maxHeight === "0px") {
+                    header.click();
+                }
+            }
+        }
+    });
+}
+
+async function showAllowlistDialog(settingId, settingName) {
+    const overlay = createElement("div", { className: "modal-overlay" });
+    const modal = createElement("div", { className: "modal-content privacy-allowlist-modal" });
+    const header = createElement("div", { className: "modal-header" }, [
+        createElement("h3", {}, [`⚙ App Exceptions for "${settingName}"`]),
+    ]);
+
+    const body = createElement("div", { className: "modal-body" });
+    body.appendChild(createElement("p", { className: "privacy-allowlist-desc" }, [
+        "Apps in this list will be exempt from this privacy restriction. Add apps that need access even when the restriction is enabled."
+    ]));
+
+    // Current allowlist entries
+    const entriesContainer = createElement("div", { className: "privacy-allowlist-entries" });
+    entriesContainer.appendChild(createElement("div", { className: "loading" }, ["Loading exceptions..."]));
+    body.appendChild(entriesContainer);
+
+    // Add app section
+    const addSection = createElement("div", { className: "privacy-allowlist-add" });
+    addSection.appendChild(createElement("h4", {}, ["Add App Exception"]));
+
+    const addRow = createElement("div", { className: "privacy-add-row" });
+    const appSelect = createElement("select", { className: "privacy-app-select", id: `allowlist-app-${settingId}` });
+    appSelect.appendChild(createElement("option", { value: "" }, ["-- Select an installed app --"]));
+    addRow.appendChild(appSelect);
+
+    const addBtn = createElement("button", { className: "btn btn-sm btn-accent" }, ["Add"]);
+    addBtn.addEventListener("click", async () => {
+        const select = document.getElementById(`allowlist-app-${settingId}`);
+        const selectedOption = select.options[select.selectedIndex];
+        if (!selectedOption || !selectedOption.value) return;
+
+        const appId = selectedOption.value;
+        const appName = selectedOption.textContent;
+        const appType = selectedOption.dataset.type || "exe_path";
+
+        try {
+            const res = await fetch(`${API}/privacy/allowlist/${settingId}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: appName, id: appId, type: appType }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(`Added "${appName}" to exceptions`, "success");
+                // Reload the allowlist
+                loadAllowlistEntries(settingId, entriesContainer);
+            } else {
+                showToast(`Error: ${data.error || "Failed to add"}`, "error");
+            }
+        } catch (err) {
+            showToast(`Error: ${err.message}`, "error");
+        }
+    });
+    addRow.appendChild(addBtn);
+    addSection.appendChild(addRow);
+
+    // Manual path entry
+    const manualSection = createElement("div", { className: "privacy-manual-entry" });
+    manualSection.appendChild(createElement("h4", {}, ["Or enter manually:"]));
+    const manualRow = createElement("div", { className: "privacy-add-row" });
+    const manualInput = createElement("input", {
+        type: "text",
+        className: "privacy-manual-input",
+        placeholder: "e.g. C:\\Program Files\\MyApp\\app.exe",
+        id: `allowlist-manual-${settingId}`,
+    });
+    manualRow.appendChild(manualInput);
+    const manualBtn = createElement("button", { className: "btn btn-sm" }, ["Add Manual Path"]);
+    manualBtn.addEventListener("click", async () => {
+        const path = manualInput.value.trim();
+        if (!path) return;
+        try {
+            const res = await fetch(`${API}/privacy/allowlist/${settingId}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: path.split("\\").pop() || path, id: path, type: "exe_path" }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(`Added "${path}" to exceptions`, "success");
+                manualInput.value = "";
+                loadAllowlistEntries(settingId, entriesContainer);
+            } else {
+                showToast(`Error: ${data.error || "Failed"}`, "error");
+            }
+        } catch (err) {
+            showToast(`Error: ${err.message}`, "error");
+        }
+    });
+    manualRow.appendChild(manualBtn);
+    manualSection.appendChild(manualRow);
+    body.appendChild(addSection);
+    body.appendChild(manualSection);
+
+    const footer = createElement("div", { className: "modal-footer" });
+    const closeBtn = createElement("button", { className: "btn" }, ["Close"]);
+    closeBtn.addEventListener("click", () => overlay.remove());
+    footer.appendChild(closeBtn);
+
+    modal.append(header, body, footer);
+    overlay.appendChild(modal);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+
+    // Load allowlist entries and app list
+    loadAllowlistEntries(settingId, entriesContainer);
+    loadInstalledAppsForAllowlist(settingId, appSelect);
+}
+
+async function loadAllowlistEntries(settingId, container) {
+    container.textContent = "";
+    try {
+        const res = await fetch(`${API}/privacy/allowlist/${settingId}`);
+        const data = await res.json();
+        const entries = data.entries || [];
+
+        if (entries.length === 0) {
+            container.appendChild(createElement("div", { className: "privacy-allowlist-empty" }, ["No app exceptions configured."]));
+            return;
+        }
+
+        for (const entry of entries) {
+            const row = createElement("div", { className: "privacy-allowlist-entry" });
+            row.appendChild(createElement("span", { className: "privacy-allowlist-name" }, [entry.name || entry.id]));
+            row.appendChild(createElement("span", { className: "privacy-allowlist-type" }, [entry.type === "package_family" ? "UWP App" : "Desktop App"]));
+            const removeBtn = createElement("button", { className: "btn btn-sm btn-danger" }, ["✕ Remove"]);
+            removeBtn.addEventListener("click", async () => {
+                try {
+                    const res = await fetch(`${API}/privacy/allowlist/${settingId}/${encodeURIComponent(entry.id)}`, {
+                        method: "DELETE",
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        showToast(`Removed "${entry.name}" from exceptions`, "success");
+                        loadAllowlistEntries(settingId, container);
+                    } else {
+                        showToast(`Error: ${data.error || "Failed"}`, "error");
+                    }
+                } catch (err) {
+                    showToast(`Error: ${err.message}`, "error");
+                }
+            });
+            row.appendChild(removeBtn);
+            container.appendChild(row);
+        }
+    } catch (err) {
+        container.appendChild(createElement("div", { className: "loading" }, [`Error: ${err.message}`]));
+    }
+}
+
+async function loadInstalledAppsForAllowlist(settingId, selectEl) {
+    try {
+        const res = await fetch(`${API}/privacy/installed-apps`);
+        const data = await res.json();
+        const apps = data.apps || [];
+
+        for (const app of apps) {
+            const option = createElement("option", { value: app.id, dataset: { type: app.type } }, [app.name]);
+            selectEl.appendChild(option);
+        }
+    } catch (err) {
+        // App list loading failed - user can still add manually
+    }
 }
 
 // ── Initialize ────────────────────────────────────────────────────

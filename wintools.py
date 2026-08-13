@@ -1,6 +1,6 @@
 """
-WinTools - Windows System Management Dashboard
-A one-click desktop application for managing your Windows system.
+WinSuite - All-in-One Windows Management Suite
+A one-click desktop application for managing, tweaking, and hardening your Windows system.
 Similar to Chris Titus WinUtil - runs as a native window on your desktop.
 """
 
@@ -15,6 +15,8 @@ from flask import Flask, render_template, jsonify, request
 
 from software_catalog import SOFTWARE_CATALOG, CATEGORY_ORDER, CATEGORY_COLORS
 from tweaks import TWEAK_CATEGORIES, get_tweak_by_id
+from winoptions import WINOPTION_CATEGORIES, get_winoption_by_id
+from privacy import PRIVACY_CATEGORIES, get_privacy_by_id
 from migrate import (
     generate_key, encrypt_data, decrypt_data, create_bundle, extract_bundle,
     get_secrets_summary, test_r2_connection, upload_to_r2, download_from_r2,
@@ -27,11 +29,23 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 SCAN_SCRIPT = BASE_DIR / "scan-apps.ps1"
 SCAN_TWEAKS_SCRIPT = BASE_DIR / "scan-tweaks.ps1"
+SCAN_WINOPTIONS_SCRIPT = BASE_DIR / "scan-winoptions.ps1"
+SCAN_PRIVACY_SCRIPT = BASE_DIR / "scan-privacy.ps1"
+SCAN_PRIVACY_APPS_SCRIPT = BASE_DIR / "scan-privacy-apps.ps1"
 APPS_JSON = DATA_DIR / "installed-apps.json"
+ALLOWLISTS_JSON = DATA_DIR / "allowlists.json"
 
 # Cached tweak states (refreshed on scan)
 _tweak_states_cache = {}
 _tweak_states_time = 0
+
+# Cached winoption states (refreshed on scan)
+_winoption_states_cache = {}
+_winoption_states_time = 0
+
+# Cached privacy states (refreshed on scan)
+_privacy_states_cache = {}
+_privacy_states_time = 0
 
 app = Flask(
     __name__,
@@ -250,6 +264,120 @@ def revert_tweaks(tweak_ids):
     return results
 
 
+# ── Windows Options State Scanning ──────────────────────────────────────
+
+def scan_winoption_states():
+    """Run scan-winoptions.ps1 and return current states of Windows options."""
+    global _winoption_states_cache, _winoption_states_time
+    # Cache for 30 seconds
+    if _winoption_states_cache and (time.time() - _winoption_states_time) < 30:
+        return _winoption_states_cache
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCAN_WINOPTIONS_SCRIPT)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            states = json.loads(result.stdout.strip())
+            # Convert string "True"/"False" to bool
+            for key, val in states.items():
+                if isinstance(val.get("is_on"), str):
+                    val["is_on"] = val["is_on"].lower() == "true"
+            _winoption_states_cache = states
+            _winoption_states_time = time.time()
+            return states
+    except Exception as e:
+        print(f"[ERROR] scan-winoption-states: {e}")
+
+    return {}
+
+
+def apply_winoptions(option_ids, action="apply"):
+    """Apply (enable) or revert (disable) selected Windows options."""
+    results = {}
+    commands = []
+
+    for oid in option_ids:
+        opt = get_winoption_by_id(oid)
+        if not opt:
+            results[oid] = {"success": False, "error": "Unknown option"}
+            continue
+
+        # Action-type items only have "run" commands
+        if opt.get("type") == "action":
+            run_cmds = opt.get("commands", {}).get("run", [])
+            if run_cmds:
+                combined = "; ".join(run_cmds)
+                commands.append((oid, combined, 300))  # longer timeout for actions
+            else:
+                results[oid] = {"success": False, "error": "No commands defined"}
+            continue
+
+        # Toggle-type items use "on" or "off" commands
+        tweak_commands = []
+
+        # Build registry commands
+        for reg in opt.get("registry", []):
+            path = reg["path"]
+            name = reg["name"]
+            value = reg["value_on"] if action == "apply" else reg["value_off"]
+            reg_type = reg.get("type", "REG_DWORD")
+            if reg_type == "REG_SZ":
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d "{value}" /f')
+            else:
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d {value} /f')
+
+        # Build service commands
+        svc_key = "on" if action == "apply" else "off"
+        for svc in opt.get("services", {}).get(svc_key, []):
+            svc_name = svc["name"]
+            svc_type = svc["startup_type"]
+            tweak_commands.append(f"Set-Service -Name '{svc_name}' -StartupType {svc_type}")
+            if action == "apply" and svc_type in ("Disabled", "Manual"):
+                tweak_commands.append(f"Stop-Service -Name '{svc_name}' -Force -ErrorAction SilentlyContinue")
+            elif action == "revert" and svc_type in ("Automatic", "Manual"):
+                tweak_commands.append(f"Start-Service -Name '{svc_name}' -ErrorAction SilentlyContinue")
+
+        # Explicit commands
+        cmd_key = "on" if action == "apply" else "off"
+        for cmd in opt.get("commands", {}).get(cmd_key, []):
+            tweak_commands.append(cmd)
+
+        if tweak_commands:
+            combined = "; ".join(tweak_commands)
+            commands.append((oid, combined, 60))
+        else:
+            results[oid] = {"success": True, "message": "No commands needed"}
+
+    # Run all commands
+    for oid, cmd, timeout in commands:
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            if r.returncode == 0:
+                opt = get_winoption_by_id(oid)
+                msg = "Applied" if action == "apply" else "Reverted"
+                if opt and opt.get("reboot_required") and action == "apply":
+                    msg += " (reboot required)"
+                results[oid] = {"success": True, "message": msg, "output": r.stdout[-500:] if r.stdout else ""}
+            else:
+                error_msg = r.stderr.strip()[:300] if r.stderr else f"Exit code {r.returncode}"
+                results[oid] = {"success": False, "error": error_msg, "output": r.stdout[-500:] if r.stdout else ""}
+        except subprocess.TimeoutExpired:
+            results[oid] = {"success": False, "error": "Command timed out"}
+        except Exception as e:
+            results[oid] = {"success": False, "error": str(e)[:200]}
+
+    # Invalidate cache
+    _winoption_states_cache = {}
+    _winoption_states_time = 0
+
+    return results
+
+
 # ── Flask Routes ────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -323,22 +451,96 @@ def api_export():
 
 # ── Install/Uninstall Routes ────────────────────────────────────────────
 
-def is_app_installed(catalog_item, installed_names):
-    """Check if a catalog item matches any installed app using fuzzy substring matching."""
+def _get_winget_installed_ids():
+    """Run `winget list` and return a set of installed winget package IDs (lowercased).
+
+    Uses the same approach as Chris Titus WinUtil: parse the winget list output
+    and match package IDs (like "7zip.7zip", "Microsoft.Edge") by looking for
+    entries that contain a dot and are surrounded by whitespace columns.
+    """
+    try:
+        result = subprocess.run(
+            ["winget", "list", "--accept-source-agreements", "--disable-interactivity"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            return set()
+        ids = set()
+        for line in result.stdout.splitlines():
+            # Skip header line and separator lines
+            stripped = line.strip()
+            if not stripped or stripped.startswith("Name") or stripped.startswith("-"):
+                continue
+            # winget list output has columns separated by multi-space gaps.
+            # The ID column is the second major column and contains dots (e.g., "7zip.7zip").
+            # Strategy: find all tokens that look like winget IDs (contain at least one dot
+            # and aren't just version numbers like "7.22.5282.0").
+            # A winget ID always starts with a letter and contains at least one dot followed
+            # by another letter/word (e.g., "Git.Git", "Microsoft.Edge", "CPUID.CPU-Z").
+            import re
+            for match in re.finditer(r'\b([A-Za-z][\w]*\.[\w.-]+)\b', line):
+                candidate = match.group(1)
+                # Must contain at least one dot and the part after the first dot must start
+                # with a letter (not a digit), to exclude version numbers like "7.22.5282.0"
+                parts = candidate.split('.')
+                if len(parts) >= 2 and parts[1][0:1].isalpha():
+                    ids.add(candidate.lower())
+        return ids
+    except Exception:
+        return set()
+
+
+# Cache winget IDs so we don't re-run winget list on every catalog request
+_winget_installed_cache = None
+_winget_installed_cache_time = 0
+
+
+def get_winget_installed():
+    """Return cached set of installed winget package IDs (refreshed every 60 seconds)."""
+    global _winget_installed_cache, _winget_installed_cache_time
+    if _winget_installed_cache and (time.time() - _winget_installed_cache_time) < 60:
+        return _winget_installed_cache
+    _winget_installed_cache = _get_winget_installed_ids()
+    _winget_installed_cache_time = time.time()
+    return _winget_installed_cache
+
+
+def is_app_installed(catalog_item, installed_names, winget_installed=None):
+    """Check if a catalog item is installed.
+
+    Matching strategy (in order of priority):
+    1. Winget ID match: if the catalog item has a winget ID and it appears in
+       `winget list` output, it's installed. This is the most reliable method.
+    2. Exact name match: catalog name exactly equals an installed app name.
+    3. Explicit match patterns with word-boundary awareness from the catalog's
+       "match" list.
+    """
+    import re
+
+    # 1. Winget ID match (most reliable)
+    if winget_installed is not None and catalog_item.get("id"):
+        pkg_id = catalog_item["id"].lower().strip()
+        if pkg_id and pkg_id in winget_installed:
+            return True
+
     item_name_lower = catalog_item["name"].lower()
-    # Direct exact match first
+
+    # 2. Direct exact match (case-insensitive)
     if item_name_lower in installed_names:
         return True
-    # Use explicit match patterns from catalog
+
+    # 3. Use explicit match patterns with word-boundary awareness
     for pattern in catalog_item.get("match", []):
         pattern_lower = pattern.lower()
         for installed_name in installed_names:
-            if pattern_lower in installed_name:
+            # Pattern as exact match
+            if pattern_lower == installed_name:
                 return True
-    # Fallback: check if catalog name is a substring of any installed app
-    for installed_name in installed_names:
-        if item_name_lower in installed_name:
-            return True
+            # Pattern as word-boundary substring
+            escaped = re.escape(pattern_lower)
+            if re.search(r'(?:^|[^a-z0-9])' + escaped + r'(?:$|[^a-z0-9])', installed_name):
+                return True
+
     return False
 
 
@@ -349,10 +551,14 @@ def api_catalog():
     if data:
         for a in data.get("Applications", []):
             installed_names.add(a.get("Name", "").lower())
+
+    # Get winget installed IDs for more reliable detection
+    winget_installed = get_winget_installed()
+
     catalog = []
     for item in SOFTWARE_CATALOG:
         entry = dict(item)
-        entry["installed"] = is_app_installed(item, installed_names)
+        entry["installed"] = is_app_installed(item, installed_names, winget_installed)
         catalog.append(entry)
     grouped = {}
     for cat in CATEGORY_ORDER:
@@ -732,6 +938,446 @@ def api_tweaks_apply():
         "action": action,
     })
 
+
+# ── Windows Options Routes ──────────────────────────────────────────────
+
+@app.route("/api/winoptions")
+def api_winoptions():
+    """Return all Windows option definitions with current states."""
+    states = scan_winoption_states()
+    result = {}
+    for cat_name, cat_data in WINOPTION_CATEGORIES.items():
+        result[cat_name] = {
+            "icon": cat_data["icon"],
+            "description": cat_data["description"],
+            "options": [],
+        }
+        for option in cat_data["options"]:
+            state = states.get(option["id"], {"is_on": None, "current_value": None})
+            entry = {
+                "id": option["id"],
+                "name": option["name"],
+                "description": option["description"],
+                "type": option.get("type", "toggle"),
+                "recommended": option.get("recommended", "off"),
+                "requires_admin": option.get("requires_admin", False),
+                "reboot_required": option.get("reboot_required", False),
+                "risk": option.get("risk", "safe"),
+                "warning": option.get("warning", ""),
+                "current_state": state.get("is_on"),
+                "current_value": state.get("current_value"),
+            }
+            result[cat_name]["options"].append(entry)
+
+    # Check if running as admin
+    try:
+        import ctypes
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        is_admin = False
+
+    result["_meta"] = {"is_admin": is_admin}
+    return jsonify(result)
+
+
+@app.route("/api/winoptions/apply", methods=["POST"])
+def api_winoptions_apply():
+    """Apply, revert, or run Windows options.
+    Body: {"options": ["rdp_toggle", ...], "action": "apply"|"revert"}
+    """
+    data = request.json or {}
+    option_ids = data.get("options", [])
+    action = data.get("action", "apply")
+
+    if not option_ids:
+        return jsonify({"success": False, "error": "No options selected"})
+
+    results = apply_winoptions(option_ids, action)
+
+    success_count = sum(1 for v in results.values() if v.get("success"))
+    fail_count = len(results) - success_count
+
+    # Check if any successful option requires reboot
+    reboot_required = False
+    for oid in option_ids:
+        opt = get_winoption_by_id(oid)
+        if opt and opt.get("reboot_required") and results.get(oid, {}).get("success"):
+            reboot_required = True
+
+    return jsonify({
+        "success": True,
+        "results": results,
+        "applied": success_count,
+        "failed": fail_count,
+        "action": action,
+        "reboot_required": reboot_required,
+    })
+
+
+# ── Privacy & Security State Scanning ────────────────────────────────────
+
+def scan_privacy_states():
+    """Run scan-privacy.ps1 and return current states of privacy settings."""
+    global _privacy_states_cache, _privacy_states_time
+    # Cache for 30 seconds
+    if _privacy_states_cache and (time.time() - _privacy_states_time) < 30:
+        return _privacy_states_cache
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCAN_PRIVACY_SCRIPT)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            states = json.loads(result.stdout.strip())
+            # Convert string "True"/"False" to bool
+            for key, val in states.items():
+                if isinstance(val, dict) and "is_on" in val:
+                    if isinstance(val["is_on"], str):
+                        val["is_on"] = val["is_on"].lower() == "true"
+            _privacy_states_cache = states
+            _privacy_states_time = time.time()
+            return states
+    except Exception as e:
+        print(f"[ERROR] scan-privacy-states: {e}")
+
+    return {}
+
+
+def apply_privacy_settings(setting_ids, action="apply"):
+    """Apply or revert selected privacy settings."""
+    results = {}
+    commands = []
+
+    for sid in setting_ids:
+        setting = get_privacy_by_id(sid)
+        if not setting:
+            results[sid] = {"success": False, "error": "Unknown setting"}
+            continue
+
+        if setting.get("type") == "action":
+            run_cmds = setting.get("commands", {}).get("run", [])
+            if run_cmds:
+                combined = "; ".join(run_cmds)
+                commands.append((sid, combined, 300))
+            else:
+                results[sid] = {"success": False, "error": "No commands defined"}
+            continue
+
+        tweak_commands = []
+        # Build registry commands
+        for reg in setting.get("registry", []):
+            path = reg["path"]
+            name = reg["name"]
+            value = reg["value_on"] if action == "apply" else reg["value_off"]
+            reg_type = reg.get("type", "REG_DWORD")
+            if reg_type == "REG_SZ":
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d "{value}" /f')
+            else:
+                tweak_commands.append(f'reg add "{path}" /v "{name}" /t {reg_type} /d {value} /f')
+
+        # Build service commands
+        svc_key = "on" if action == "apply" else "off"
+        for svc in setting.get("services", {}).get(svc_key, []):
+            svc_name = svc["name"]
+            svc_type = svc["startup_type"]
+            tweak_commands.append(f"Set-Service -Name '{svc_name}' -StartupType {svc_type} -ErrorAction SilentlyContinue")
+            if action == "apply" and svc_type in ("Disabled", "Manual"):
+                tweak_commands.append(f"Stop-Service -Name '{svc_name}' -Force -ErrorAction SilentlyContinue")
+            elif action == "revert" and svc_type in ("Automatic", "Manual"):
+                tweak_commands.append(f"Start-Service -Name '{svc_name}' -ErrorAction SilentlyContinue")
+
+        # Explicit commands
+        cmd_key = "on" if action == "apply" else "off"
+        for cmd in setting.get("commands", {}).get(cmd_key, []):
+            tweak_commands.append(cmd)
+
+        if tweak_commands:
+            combined = "; ".join(tweak_commands)
+            commands.append((sid, combined, 60))
+        else:
+            results[sid] = {"success": True, "message": "No commands needed"}
+
+    # Run all commands
+    for sid, cmd, timeout in commands:
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            if r.returncode == 0:
+                setting = get_privacy_by_id(sid)
+                msg = "Applied" if action == "apply" else "Reverted"
+                if setting and setting.get("reboot_required") and action == "apply":
+                    msg += " (reboot required)"
+                results[sid] = {"success": True, "message": msg, "output": r.stdout[-500:] if r.stdout else ""}
+            else:
+                error_msg = r.stderr.strip()[:300] if r.stderr else f"Exit code {r.returncode}"
+                results[sid] = {"success": False, "error": error_msg, "output": r.stdout[-500:] if r.stdout else ""}
+        except subprocess.TimeoutExpired:
+            results[sid] = {"success": False, "error": "Command timed out"}
+        except Exception as e:
+            results[sid] = {"success": False, "error": str(e)[:200]}
+
+    # Invalidate cache
+    _privacy_states_cache = {}
+    _privacy_states_time = 0
+
+    return results
+
+
+def load_allowlists():
+    """Load allowlists from data/allowlists.json."""
+    if not ALLOWLISTS_JSON.exists():
+        return {}
+    try:
+        with open(ALLOWLISTS_JSON, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_allowlists(data):
+    """Save allowlists to data/allowlists.json."""
+    DATA_DIR.mkdir(exist_ok=True)
+    with open(ALLOWLISTS_JSON, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def apply_allowlist_entries(setting_id, entries, action="add"):
+    """Apply or remove per-app allowlist registry entries for a setting."""
+    setting = get_privacy_by_id(setting_id)
+    if not setting or not setting.get("allowlist_support"):
+        return {"success": False, "error": "Setting does not support allowlists"}
+
+    base_path = setting.get("allowlist_registry")
+    if not base_path:
+        return {"success": False, "error": "No allowlist registry path defined"}
+
+    # Convert HKCU\ to HKCU:\ for PowerShell
+    ps_base = base_path.replace(r"HKCU\\", "HKCU:\\").replace(r"HKLM\\", "HKLM:\\").replace("\\", "\\\\")
+    # Actually use reg.exe format
+    reg_base = base_path
+
+    value_allow = setting.get("allowlist_value_allow", "Allow")
+    value_deny = setting.get("allowlist_value_deny", "Deny")
+
+    commands = []
+    for entry in entries:
+        app_id = entry.get("id", "")
+        app_type = entry.get("type", "exe_path")
+        app_name = entry.get("name", app_id)
+
+        if action == "add":
+            if app_type == "package_family":
+                # For packaged apps: HKCU\...\ConsentStore\<capability>\<PackageFamilyName>\Value = Allow
+                cmd = f'reg add "{reg_base}\\{app_id}" /v Value /t REG_SZ /d "{value_allow}" /f'
+            else:
+                # For desktop apps: HKCU\...\ConsentStore\<capability>\NonPackaged\<escaped_path>\Value = Allow
+                escaped = app_id.replace("\\", "\\\\")
+                cmd = f'reg add "{reg_base}\\NonPackaged\\{escaped}" /v Value /t REG_SZ /d "{value_allow}" /f'
+            commands.append(cmd)
+        elif action == "remove":
+            if app_type == "package_family":
+                cmd = f'reg delete "{reg_base}\\{app_id}" /f 2>$null'
+            else:
+                escaped = app_id.replace("\\", "\\\\")
+                cmd = f'reg delete "{reg_base}\\NonPackaged\\{escaped}" /f 2>$null'
+            commands.append(cmd)
+
+    if commands:
+        combined = "; ".join(commands)
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", combined],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode == 0:
+                return {"success": True, "message": f"Allowlist {action}d"}
+            else:
+                return {"success": False, "error": r.stderr.strip()[:300] if r.stderr else "Registry command failed"}
+        except Exception as e:
+            return {"success": False, "error": str(e)[:200]}
+
+    return {"success": True, "message": "No changes needed"}
+
+
+# ── Privacy & Security Flask Routes ──────────────────────────────────────
+
+@app.route("/api/privacy")
+def api_privacy():
+    """Return all privacy categories with current states."""
+    states = scan_privacy_states()
+    is_elevated = False
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "(New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout.strip().lower() == "true":
+            is_elevated = True
+    except Exception:
+        pass
+
+    allowlists = load_allowlists()
+
+    result = {}
+    for cat_name, cat_data in PRIVACY_CATEGORIES.items():
+        result[cat_name] = {
+            "icon": cat_data["icon"],
+            "description": cat_data["description"],
+            "settings": [],
+        }
+        for setting in cat_data["settings"]:
+            entry = dict(setting)
+            sid = setting["id"]
+            state = states.get(sid, {})
+            entry["current_state"] = state.get("is_on")
+            entry["current_value"] = state.get("current_value")
+            # Add allowlist data if supported
+            if setting.get("allowlist_support"):
+                entry["allowlist_entries"] = allowlists.get(sid, [])
+            result[cat_name]["settings"].append(entry)
+
+    result["_meta"] = {"is_admin": is_elevated}
+    return jsonify(result)
+
+
+@app.route("/api/privacy/apply", methods=["POST"])
+def api_privacy_apply():
+    """Apply or revert selected privacy settings."""
+    data = request.get_json()
+    setting_ids = data.get("settings", [])
+    action = data.get("action", "apply")
+
+    if not setting_ids:
+        return jsonify({"success": False, "error": "No settings selected"})
+
+    results = apply_privacy_settings(setting_ids, action)
+
+    success_count = sum(1 for r in results.values() if r.get("success"))
+    fail_count = sum(1 for r in results.values() if not r.get("success"))
+    reboot_required = any(
+        get_privacy_by_id(sid) and get_privacy_by_id(sid).get("reboot_required")
+        for sid in setting_ids
+    )
+
+    return jsonify({
+        "success": True,
+        "results": results,
+        "applied": success_count,
+        "failed": fail_count,
+        "action": action,
+        "reboot_required": reboot_required,
+    })
+
+
+@app.route("/api/privacy/allowlist/<setting_id>", methods=["GET"])
+def api_privacy_allowlist_get(setting_id):
+    """Get allowlist entries for a specific setting."""
+    setting = get_privacy_by_id(setting_id)
+    if not setting:
+        return jsonify({"error": "Setting not found"}), 404
+    if not setting.get("allowlist_support"):
+        return jsonify({"error": "Setting does not support allowlists"}), 400
+
+    allowlists = load_allowlists()
+    entries = allowlists.get(setting_id, [])
+    return jsonify({"setting_id": setting_id, "entries": entries})
+
+
+@app.route("/api/privacy/allowlist/<setting_id>", methods=["POST"])
+def api_privacy_allowlist_add(setting_id):
+    """Add an app to the allowlist for a setting."""
+    setting = get_privacy_by_id(setting_id)
+    if not setting:
+        return jsonify({"error": "Setting not found"}), 404
+    if not setting.get("allowlist_support"):
+        return jsonify({"error": "Setting does not support allowlists"}), 400
+
+    data = request.get_json()
+    app_name = data.get("name", "")
+    app_id = data.get("id", "")
+    app_type = data.get("type", "exe_path")
+
+    if not app_id:
+        return jsonify({"error": "App ID is required"}), 400
+
+    allowlists = load_allowlists()
+    if setting_id not in allowlists:
+        allowlists[setting_id] = []
+
+    # Check for duplicates
+    for entry in allowlists[setting_id]:
+        if entry.get("id") == app_id:
+            return jsonify({"error": "App already in allowlist"}), 409
+
+    new_entry = {"name": app_name, "id": app_id, "type": app_type}
+    allowlists[setting_id].append(new_entry)
+    save_allowlists(allowlists)
+
+    # Apply the registry entry
+    result = apply_allowlist_entries(setting_id, [new_entry], action="add")
+
+    return jsonify({
+        "success": True,
+        "entry": new_entry,
+        "registry_result": result,
+    })
+
+
+@app.route("/api/privacy/allowlist/<setting_id>/<path:app_id>", methods=["DELETE"])
+def api_privacy_allowlist_remove(setting_id, app_id):
+    """Remove an app from the allowlist for a setting."""
+    setting = get_privacy_by_id(setting_id)
+    if not setting:
+        return jsonify({"error": "Setting not found"}), 404
+
+    allowlists = load_allowlists()
+    if setting_id not in allowlists:
+        return jsonify({"error": "No allowlist entries for this setting"}), 404
+
+    # Find and remove the entry
+    entry_to_remove = None
+    new_entries = []
+    for entry in allowlists[setting_id]:
+        if entry.get("id") == app_id:
+            entry_to_remove = entry
+        else:
+            new_entries.append(entry)
+
+    if not entry_to_remove:
+        return jsonify({"error": "App not found in allowlist"}), 404
+
+    allowlists[setting_id] = new_entries
+    save_allowlists(allowlists)
+
+    # Remove the registry entry
+    result = apply_allowlist_entries(setting_id, [entry_to_remove], action="remove")
+
+    return jsonify({
+        "success": True,
+        "removed": entry_to_remove,
+        "registry_result": result,
+    })
+
+
+@app.route("/api/privacy/installed-apps")
+def api_privacy_installed_apps():
+    """List installed apps available for allowlist picker."""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCAN_PRIVACY_APPS_SCRIPT)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            apps = json.loads(result.stdout.strip())
+            return jsonify({"apps": apps, "total": len(apps)})
+        return jsonify({"apps": [], "total": 0, "error": result.stderr.strip()[:200] if result.stderr else "Scan failed"})
+    except Exception as e:
+        return jsonify({"apps": [], "total": 0, "error": str(e)[:200]})
+
+
 class Api:
     """JS-callable API for pywebview's window.pywebview.api bridge."""
     def saveFile(self, b64_data, filename):
@@ -794,7 +1440,7 @@ if __name__ == "__main__":
     time.sleep(1.5)
 
     print("\n" + "=" * 50)
-    print("  WinTools Dashboard")
+    print("  WinSuite - All-in-One Windows Suite")
     print("  Opening in native window...")
     print("=" * 50 + "\n")
 
@@ -802,7 +1448,7 @@ if __name__ == "__main__":
     import uuid
     session_id = uuid.uuid4().hex[:8]
     window = webview.create_window(
-        "WinTools Dashboard",
+        "WinSuite - All-in-One Windows Suite",
         f"http://127.0.0.1:18080/?_={session_id}",
         width=1400,
         height=900,
@@ -811,4 +1457,4 @@ if __name__ == "__main__":
         js_api=api,
     )
     webview.start()
-    print("WinTools closed.")
+    print("WinSuite closed.")

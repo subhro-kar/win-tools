@@ -6,4 +6,11 @@ data/migration-bundle.encrypted
 data/migration-upload.encrypted
 data/r2-credentials.json
 data/migration.key
+data/allowlists.json
 *.log
+
+# PyInstaller build artifacts
+build/
+dist/
+output/
+*.spec.bak

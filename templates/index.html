@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>WinTools Dashboard</title>
+    <title>WinSuite - All-in-One Windows Suite</title>
     <link rel="stylesheet" href="/static/css/style-v2.css">
 </head>
 <body>
@@ -16,7 +16,7 @@
             <div class="sidebar-header">
                 <div class="logo">
                     <span class="logo-icon">&#9881;</span>
-                    <span class="logo-text">WinTools</span>
+                    <span class="logo-text">WinSuite</span>
                 </div>
                 <div class="version">v1.0.0</div>
             </div>
@@ -45,6 +45,14 @@
                 <li class="nav-tab" data-tab="tweaks">
                     <span class="tab-icon">&#9881;</span>
                     <span class="tab-label">Tweaks</span>
+                </li>
+                <li class="nav-tab" data-tab="winoptions">
+                    <span class="tab-icon">&#128295;</span>
+                    <span class="tab-label">Options</span>
+                </li>
+                <li class="nav-tab" data-tab="privacy">
+                    <span class="tab-icon">&#128272;</span>
+                    <span class="tab-label">Privacy</span>
                 </li>
             </ul>
 
@@ -276,6 +284,33 @@
                 <div id="tweaks-result" class="tweaks-result"></div>
                 <div id="tweaks-content" class="tweaks-content">
                     <div class="loading">Scanning Windows settings...</div>
+                </div>
+            </section>
+
+            <!-- Windows Options & Tools Tab -->
+            <section id="tab-winoptions" class="tab-content">
+                <div class="tab-header">
+                    <h1>Windows Options & Tools</h1>
+                    <p class="tab-desc">Toggle features on/off — changes apply immediately. Use ▶ Run for one-time actions.</p>
+                </div>
+                <div id="winoptions-result" class="wo-result-area"></div>
+                <div id="winoptions-content" class="wo-content">
+                    <div class="loading">Scanning Windows options...</div>
+                </div>
+            </section>
+
+            <!-- Privacy & Security Tab -->
+            <section id="tab-privacy" class="tab-content">
+                <div class="tab-header">
+                    <h1>Privacy & Security</h1>
+                    <p class="tab-desc">Harden your Windows privacy and security. Toggle settings to apply immediately. <span class="privacy-allowlist-hint">Settings with ⚙ support app-level exceptions.</span></p>
+                </div>
+                <div class="privacy-toolbar">
+                    <input type="text" id="privacy-search" placeholder="Search privacy settings..." class="privacy-search-input">
+                </div>
+                <div id="privacy-result" class="wo-result-area"></div>
+                <div id="privacy-content" class="privacy-content">
+                    <div class="loading">Scanning privacy settings...</div>
                 </div>
             </section>
 
