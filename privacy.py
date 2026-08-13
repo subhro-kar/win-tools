@@ -1843,20 +1843,6 @@ PRIVACY_CATEGORIES = {
             },
             {
                 "type": "toggle",
-                "id": "priv_start_recommendations_misc",
-                "name": "Disable Start Menu Recommendations",
-                "description": "Remove recommended content from the Start menu",
-                "registry": [
-                    {"path": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "name": "Start_IrisRecommendations", "type": "REG_DWORD", "value_on": 0, "value_off": 1},
-                ],
-                "recommended": "on",
-                "requires_admin": False,
-                "reboot_required": False,
-                "risk": "safe",
-                "allowlist_support": False,
-            },
-            {
-                "type": "toggle",
                 "id": "priv_account_notifications",
                 "name": "Disable Account Notifications",
                 "description": "Stop Windows from showing account-related notifications",
@@ -1908,7 +1894,7 @@ PRIVACY_CATEGORIES = {
                 "type": "toggle",
                 "id": "priv_delivery_optimization",
                 "name": "Disable Delivery Optimization (P2P Updates)",
-                "description": "Stop Windows from sharing updates with other PCs over the network",
+                "description": "Stop Windows from sharing updates with other PCs over the network and disable the Delivery Optimization service",
                 "registry": [
                     {"path": r"HKLM\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization", "name": "DODownloadMode", "type": "REG_DWORD", "value_on": 0, "value_off": 3},
                 ],
@@ -1917,6 +1903,10 @@ PRIVACY_CATEGORIES = {
                 "reboot_required": False,
                 "risk": "safe",
                 "allowlist_support": False,
+                "services": {
+                    "on": [{"name": "DoSvc", "startup_type": "disabled"}],
+                    "off": [{"name": "DoSvc", "startup_type": "automatic"}],
+                },
             },
             {
                 "type": "toggle",
@@ -2522,24 +2512,6 @@ PRIVACY_CATEGORIES = {
                 "services": {
                     "on": [{"name": "SysMain", "startup_type": "disabled"}],
                     "off": [{"name": "SysMain", "startup_type": "automatic"}],
-                },
-            },
-            {
-                "type": "toggle",
-                "id": "priv_disable_delivery_optimization",
-                "name": "Disable Delivery Optimization Service",
-                "description": "Disable the Delivery Optimization service to stop P2P update sharing",
-                "registry": [
-                    {"path": r"HKLM\SYSTEM\CurrentControlSet\Services\DoSvc", "name": "Start", "type": "REG_DWORD", "value_on": 4, "value_off": 2},
-                ],
-                "recommended": "on",
-                "requires_admin": True,
-                "reboot_required": False,
-                "risk": "safe",
-                "allowlist_support": False,
-                "services": {
-                    "on": [{"name": "DoSvc", "startup_type": "disabled"}],
-                    "off": [{"name": "DoSvc", "startup_type": "automatic"}],
                 },
             },
             {

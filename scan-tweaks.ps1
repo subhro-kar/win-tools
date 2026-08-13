@@ -87,23 +87,6 @@ if ($null -ne $noLock) {
     $output["lock_screen_disable"] = @{ is_on = $null; current_value = $null }
 }
 
-# Start Menu Recommendations
-$startIris = (Get-ItemProperty -Path $advPath -Name "Start_IrisRecommendations" -ErrorAction SilentlyContinue).Start_IrisRecommendations
-if ($null -ne $startIris) {
-    $output["start_menu_recommendations"] = @{ is_on = ($startIris -eq 0); current_value = $startIris }
-} else {
-    $output["start_menu_recommendations"] = @{ is_on = $null; current_value = $null }
-}
-
-# Bing Search in Start
-$bingPath = "HKCU:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
-$bingEnabled = (Get-ItemProperty -Path $bingPath -Name "BingSearchEnabled" -ErrorAction SilentlyContinue).BingSearchEnabled
-if ($null -ne $bingEnabled) {
-    $output["bing_search_start"] = @{ is_on = ($bingEnabled -eq 0); current_value = $bingEnabled }
-} else {
-    $output["bing_search_start"] = @{ is_on = $null; current_value = $null }
-}
-
 # Verbose Logon
 $sysPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
 $verboseStatus = (Get-ItemProperty -Path $sysPath -Name "VerboseStatus" -ErrorAction SilentlyContinue).VerboseStatus
@@ -122,65 +105,6 @@ if ($null -ne $numLock) {
     $output["numlock_startup"] = @{ is_on = $null; current_value = $null }
 }
 
-# ── Privacy & Telemetry ──────────────────────────────────────────────
-
-# Advertising ID
-$adPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo"
-$adEnabled = (Get-ItemProperty -Path $adPath -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
-if ($null -ne $adEnabled) {
-    $output["disable_ad_id"] = @{ is_on = ($adEnabled -eq 0); current_value = $adEnabled }
-} else {
-    $output["disable_ad_id"] = @{ is_on = $null; current_value = $null }
-}
-
-# Telemetry
-$telemetryPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
-$allowTelemetry = (Get-ItemProperty -Path $telemetryPath -Name "AllowTelemetry" -ErrorAction SilentlyContinue).AllowTelemetry
-$diagTrackSvc = (Get-Service -Name "DiagTrack" -ErrorAction SilentlyContinue).StartType
-if ($null -ne $allowTelemetry -and $null -ne $diagTrackSvc) {
-    $output["disable_telemetry"] = @{ is_on = ($allowTelemetry -eq 0 -or $diagTrackSvc -eq "Disabled"); current_value = "$allowTelemetry / $diagTrackSvc" }
-} elseif ($null -ne $diagTrackSvc) {
-    $output["disable_telemetry"] = @{ is_on = ($diagTrackSvc -eq "Disabled"); current_value = "$diagTrackSvc" }
-} else {
-    $output["disable_telemetry"] = @{ is_on = $null; current_value = $null }
-}
-
-# Location
-$locPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location"
-$locValue = (Get-ItemProperty -Path $locPath -Name "Value" -ErrorAction SilentlyContinue).Value
-if ($null -ne $locValue) {
-    $output["disable_location"] = @{ is_on = ($locValue -eq "Deny"); current_value = $locValue }
-} else {
-    $output["disable_location"] = @{ is_on = $null; current_value = $null }
-}
-
-# Activity History
-$actPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
-$actFeed = (Get-ItemProperty -Path $actPath -Name "EnableActivityFeed" -ErrorAction SilentlyContinue).EnableActivityFeed
-if ($null -ne $actFeed) {
-    $output["disable_activity_history"] = @{ is_on = ($actFeed -eq 0); current_value = $actFeed }
-} else {
-    $output["disable_activity_history"] = @{ is_on = $null; current_value = $null }
-}
-
-# Diagnostic Data
-$diagPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Privacy"
-$tailored = (Get-ItemProperty -Path $diagPath -Name "TailoredExperiencesWithDiagnosticDataEnabled" -ErrorAction SilentlyContinue).TailoredExperiencesWithDiagnosticDataEnabled
-if ($null -ne $tailored) {
-    $output["disable_diagnostic_data"] = @{ is_on = ($tailored -eq 0); current_value = $tailored }
-} else {
-    $output["disable_diagnostic_data"] = @{ is_on = $null; current_value = $null }
-}
-
-# Clipboard History
-$clipPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
-$clipHist = (Get-ItemProperty -Path $clipPath -Name "AllowClipboardHistory" -ErrorAction SilentlyContinue).AllowClipboardHistory
-if ($null -ne $clipHist) {
-    $output["disable_clipboard_history"] = @{ is_on = ($clipHist -eq 0); current_value = $clipHist }
-} else {
-    $output["disable_clipboard_history"] = @{ is_on = $null; current_value = $null }
-}
-
 # Online Speech
 $speechPath = "HKCU:\SOFTWARE\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy"
 $hasAccepted = (Get-ItemProperty -Path $speechPath -Name "HasAccepted" -ErrorAction SilentlyContinue).HasAccepted
@@ -188,15 +112,6 @@ if ($null -ne $hasAccepted) {
     $output["disable_online_speech"] = @{ is_on = ($hasAccepted -eq 0); current_value = $hasAccepted }
 } else {
     $output["disable_online_speech"] = @{ is_on = $null; current_value = $null }
-}
-
-# Input Personalization
-$tipcPath = "HKCU:\SOFTWARE\Microsoft\Input\TIPC"
-$tipcEnabled = (Get-ItemProperty -Path $tipcPath -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
-if ($null -ne $tipcEnabled) {
-    $output["disable_input_personalization"] = @{ is_on = ($tipcEnabled -eq 0); current_value = $tipcEnabled }
-} else {
-    $output["disable_input_personalization"] = @{ is_on = $null; current_value = $null }
 }
 
 # Defender Samples
@@ -208,15 +123,6 @@ if ($null -ne $submitConsent) {
     $output["disable_defender_samples"] = @{ is_on = $null; current_value = $null }
 }
 
-# Consumer Features
-$cloudPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent"
-$consumerFeatures = (Get-ItemProperty -Path $cloudPath -Name "DisableWindowsConsumerFeatures" -ErrorAction SilentlyContinue).DisableWindowsConsumerFeatures
-if ($null -ne $consumerFeatures) {
-    $output["disable_consumer_features"] = @{ is_on = ($consumerFeatures -eq 1); current_value = $consumerFeatures }
-} else {
-    $output["disable_consumer_features"] = @{ is_on = $null; current_value = $null }
-}
-
 # WPBT
 $wpbtPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
 $disableWpbt = (Get-ItemProperty -Path $wpbtPath -Name "DisableWpbtExecution" -ErrorAction SilentlyContinue).DisableWpbtExecution
@@ -224,15 +130,6 @@ if ($null -ne $disableWpbt) {
     $output["disable_wpbt"] = @{ is_on = ($disableWpbt -eq 1); current_value = $disableWpbt }
 } else {
     $output["disable_wpbt"] = @{ is_on = $null; current_value = $null }
-}
-
-# Delivery Optimization
-$doPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization"
-$doMode = (Get-ItemProperty -Path $doPath -Name "DODownloadMode" -ErrorAction SilentlyContinue).DODownloadMode
-if ($null -ne $doMode) {
-    $output["disable_delivery_optimization"] = @{ is_on = ($doMode -eq 0); current_value = $doMode }
-} else {
-    $output["disable_delivery_optimization"] = @{ is_on = $null; current_value = $null }
 }
 
 # ── Performance & Power ───────────────────────────────────────────────
@@ -269,14 +166,6 @@ if ($null -ne $wsearchSvc) {
     $output["disable_indexing"] = @{ is_on = ($wsearchSvc -eq "Disabled"); current_value = "$wsearchSvc" }
 } else {
     $output["disable_indexing"] = @{ is_on = $null; current_value = $null }
-}
-
-# SysMain (service state)
-$sysMainSvc = (Get-Service -Name "SysMain" -ErrorAction SilentlyContinue).StartType
-if ($null -ne $sysMainSvc) {
-    $output["disable_sysmain"] = @{ is_on = ($sysMainSvc -eq "Disabled"); current_value = "$sysMainSvc" }
-} else {
-    $output["disable_sysmain"] = @{ is_on = $null; current_value = $null }
 }
 
 # Storage Sense
@@ -325,33 +214,6 @@ if ($null -ne $disableAi) {
     $output["disable_copilot"] = @{ is_on = $null; current_value = $null }
 }
 
-# SMBv1
-$smbPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
-$smb1 = (Get-ItemProperty -Path $smbPath -Name "SMB1" -ErrorAction SilentlyContinue).SMB1
-if ($null -ne $smb1) {
-    $output["disable_smb1"] = @{ is_on = ($smb1 -eq 0); current_value = $smb1 }
-} else {
-    $output["disable_smb1"] = @{ is_on = $null; current_value = $null }
-}
-
-# AutoRun
-$arPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
-$noAutoplay = (Get-ItemProperty -Path $arPath -Name "NoAutoplay" -ErrorAction SilentlyContinue).NoAutoplay
-if ($null -ne $noAutoplay) {
-    $output["disable_autorun"] = @{ is_on = ($noAutoplay -eq 1); current_value = $noAutoplay }
-} else {
-    $output["disable_autorun"] = @{ is_on = $null; current_value = $null }
-}
-
-# Remote Desktop
-$rdpPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server"
-$denyRdp = (Get-ItemProperty -Path $rdpPath -Name "fDenyTSConnections" -ErrorAction SilentlyContinue).fDenyTSConnections
-if ($null -ne $denyRdp) {
-    $output["disable_rdp"] = @{ is_on = ($denyRdp -eq 1); current_value = $denyRdp }
-} else {
-    $output["disable_rdp"] = @{ is_on = $null; current_value = $null }
-}
-
 # DNS-over-HTTPS
 $dohPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
 $enableDoh = (Get-ItemProperty -Path $dohPath -Name "EnableAutoDoh" -ErrorAction SilentlyContinue).EnableAutoDoh
@@ -372,15 +234,6 @@ if ($null -ne $authEnabled) {
 
 # ── Hardening ───────────────────────────────────────────────────────────
 
-# Disable Background Apps
-$bgPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications"
-$bgVal = (Get-ItemProperty -Path $bgPath -Name "GlobalUserDisabled" -ErrorAction SilentlyContinue).GlobalUserDisabled
-if ($null -ne $bgVal) {
-    $output["disable_background_apps"] = @{ is_on = ($bgVal -eq 1); current_value = $bgVal }
-} else {
-    $output["disable_background_apps"] = @{ is_on = $null; current_value = $null }
-}
-
 # Enable SmartScreen
 $ssPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
 $ssVal = (Get-ItemProperty -Path $ssPath -Name "EnableSmartScreen" -ErrorAction SilentlyContinue).EnableSmartScreen
@@ -398,10 +251,10 @@ if ($null -ne $wpadVal) {
     $output["disable_wpad"] = @{ is_on = $null; current_value = $null }
 }
 
-# Disable LLMNR (Multicast DNS)
-$mcastVal = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" -Name "EnableMulticast" -ErrorAction SilentlyContinue).EnableMulticast
-if ($null -ne $mcastVal) {
-    $output["disable_llmnr"] = @{ is_on = ($mcastVal -eq 0); current_value = $mcastVal }
+# Disable LLMNR
+$llmnrVal = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" -Name "EnableLLMNR" -ErrorAction SilentlyContinue).EnableLLMNR
+if ($null -ne $llmnrVal) {
+    $output["disable_llmnr"] = @{ is_on = ($llmnrVal -eq 0); current_value = $llmnrVal }
 } else {
     $output["disable_llmnr"] = @{ is_on = $null; current_value = $null }
 }
@@ -537,14 +390,6 @@ if ($null -ne $netStrong) {
     $output["force_strong_crypto_net"] = @{ is_on = ($netStrong -eq 1); current_value = $netStrong }
 } else {
     $output["force_strong_crypto_net"] = @{ is_on = $null; current_value = $null }
-}
-
-# Disable Web Search in Search Bar
-$bingSearch = (Get-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" -Name "BingSearchEnabled" -ErrorAction SilentlyContinue).BingSearchEnabled
-if ($null -ne $bingSearch) {
-    $output["disable_windows_search_web"] = @{ is_on = ($bingSearch -eq 0); current_value = $bingSearch }
-} else {
-    $output["disable_windows_search_web"] = @{ is_on = $null; current_value = $null }
 }
 
 # Disable Wi-Fi Sense

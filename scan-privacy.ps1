@@ -512,9 +512,6 @@ Set-SingleHklm -Id "priv_soft_landing" -Path "HKLM:\SOFTWARE\Policies\Microsoft\
 # priv_diagnostic_data (HKLM)
 Set-SingleHklm -Id "priv_diagnostic_data" -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -ValueOn 0
 
-# priv_start_recommendations_misc
-Set-SingleHkcu -Id "priv_start_recommendations_misc" -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_IrisRecommendations" -ValueOn 0
-
 # priv_account_notifications
 Set-SingleHkcu -Id "priv_account_notifications" -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowAccountNotifications" -ValueOn 0
 
@@ -526,8 +523,15 @@ Set-SingleHklm -Id "priv_exclude_driver_updates" -Path "HKLM:\SOFTWARE\Policies\
 # priv_no_auto_restart (HKLM)
 Set-SingleHklm -Id "priv_no_auto_restart" -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoRebootWithLoggedOnUsers" -ValueOn 1
 
-# priv_delivery_optimization (HKLM)
-Set-SingleHklm -Id "priv_delivery_optimization" -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -ValueOn 0
+# priv_delivery_optimization (HKLM registry + service check)
+$doDlMode = Test-RegOnAdmin -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -ValueOn 0
+$doSvc = Get-Service -Name "DoSvc" -ErrorAction SilentlyContinue
+$doSvcStr = if ($doSvc) { "$($doSvc.Status)/$($doSvc.StartType)" } else { "not_found" }
+if ($doDlMode.found) {
+    $output["priv_delivery_optimization"] = @{ is_on = $doDlMode.is_on; current_value = "$($doDlMode.current) svc=$doSvcStr" }
+} else {
+    $output["priv_delivery_optimization"] = @{ is_on = $null; current_value = $null }
+}
 
 # priv_auto_update_store_apps (HKLM)
 Set-SingleHklm -Id "priv_auto_update_store_apps" -Path "HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore" -Name "AutoDownload" -ValueOn 2
@@ -740,18 +744,6 @@ if ("$($smReg.current)" -eq "need_admin") {
     $output["priv_disable_sysmain"] = @{ is_on = $smReg.is_on; current_value = "$($smReg.current) svc=$smSvcStr" }
 } else {
     $output["priv_disable_sysmain"] = @{ is_on = $null; current_value = $null }
-}
-
-# priv_disable_delivery_optimization (HKLM registry + service check)
-$doReg = Test-RegOnAdmin -Path "HKLM:\SYSTEM\CurrentControlSet\Services\DoSvc" -Name "Start" -ValueOn 4
-$doSvc = Get-Service -Name "DoSvc" -ErrorAction SilentlyContinue
-$doSvcStr = if ($doSvc) { "$($doSvc.Status)/$($doSvc.StartType)" } else { "not_found" }
-if ("$($doReg.current)" -eq "need_admin") {
-    $output["priv_disable_delivery_optimization"] = @{ is_on = $null; current_value = "need_admin" }
-} elseif ($doReg.found) {
-    $output["priv_disable_delivery_optimization"] = @{ is_on = $doReg.is_on; current_value = "$($doReg.current) svc=$doSvcStr" }
-} else {
-    $output["priv_disable_delivery_optimization"] = @{ is_on = $null; current_value = $null }
 }
 
 # priv_disable_diagtrack (HKLM registry + service check)

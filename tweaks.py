@@ -74,7 +74,7 @@ TWEAK_CATEGORIES = {
                         "name": "Hidden",
                         "type": "REG_DWORD",
                         "value_on": 1,
-                        "value_off": 0,
+                        "value_off": 2,
                     },
                 ],
                 "recommended": "off",
@@ -184,40 +184,6 @@ TWEAK_CATEGORIES = {
                 "risk": "safe",
             },
             {
-                "id": "start_menu_recommendations",
-                "name": "Disable Start Recommendations",
-                "description": "Remove recommended/recent files section from Start menu",
-                "registry": [
-                    {
-                        "path": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced",
-                        "name": "Start_IrisRecommendations",
-                        "type": "REG_DWORD",
-                        "value_on": 0,
-                        "value_off": 1,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": False,
-                "risk": "safe",
-            },
-            {
-                "id": "bing_search_start",
-                "name": "Disable Bing in Start Menu",
-                "description": "Remove web search results from Start menu search",
-                "registry": [
-                    {
-                        "path": r"HKCU\SOFTWARE\Policies\Microsoft\Windows\Explorer",
-                        "name": "BingSearchEnabled",
-                        "type": "REG_DWORD",
-                        "value_on": 0,
-                        "value_off": 1,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": False,
-                "risk": "safe",
-            },
-            {
                 "id": "verbose_logon",
                 "name": "Verbose Logon Messages",
                 "description": "Show detailed status messages during startup/shutdown",
@@ -258,122 +224,6 @@ TWEAK_CATEGORIES = {
         "description": "Reduce data collection and tracking",
         "tweaks": [
             {
-                "id": "disable_ad_id",
-                "name": "Disable Advertising ID",
-                "description": "Prevent Windows from using a unique advertising ID for tracking",
-                "registry": [
-                    {
-                        "path": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo",
-                        "name": "Enabled",
-                        "type": "REG_DWORD",
-                        "value_on": 0,
-                        "value_off": 1,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": False,
-                "risk": "safe",
-            },
-            {
-                "id": "disable_telemetry",
-                "name": "Disable Telemetry",
-                "description": "Stop Windows from sending diagnostic data to Microsoft",
-                "registry": [
-                    {
-                        "path": r"HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection",
-                        "name": "AllowTelemetry",
-                        "type": "REG_DWORD",
-                        "value_on": 0,
-                        "value_off": 1,
-                    },
-                ],
-                "services": {
-                    "on": [
-                        {"name": "DiagTrack", "startup_type": "Disabled"},
-                        {"name": "wermgr", "startup_type": "Disabled"},
-                    ],
-                    "off": [
-                        {"name": "DiagTrack", "startup_type": "Automatic"},
-                        {"name": "wermgr", "startup_type": "Automatic"},
-                    ],
-                },
-                "commands": {
-                    "on": ["[Environment]::SetEnvironmentVariable('POWERSHELL_TELEMETRY_OPTOUT', '1', 'Machine')"],
-                    "off": ["[Environment]::SetEnvironmentVariable('POWERSHELL_TELEMETRY_OPTOUT', '', 'Machine')"],
-                },
-                "recommended": "on",
-                "requires_admin": True,
-                "risk": "safe",
-            },
-            {
-                "id": "disable_location",
-                "name": "Disable Location Tracking",
-                "description": "Prevent apps from accessing your location",
-                "registry": [
-                    {
-                        "path": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location",
-                        "name": "Value",
-                        "type": "REG_SZ",
-                        "value_on": "Deny",
-                        "value_off": "Allow",
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": False,
-                "risk": "safe",
-            },
-            {
-                "id": "disable_activity_history",
-                "name": "Disable Activity History",
-                "description": "Stop Windows from tracking your activity timeline",
-                "registry": [
-                    {
-                        "path": r"HKLM\SOFTWARE\Policies\Microsoft\Windows\System",
-                        "name": "EnableActivityFeed",
-                        "type": "REG_DWORD",
-                        "value_on": 0,
-                        "value_off": 1,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": True,
-                "risk": "safe",
-            },
-            {
-                "id": "disable_diagnostic_data",
-                "name": "Limit Diagnostic Data",
-                "description": "Stop sending tailored experiences diagnostic data to Microsoft",
-                "registry": [
-                    {
-                        "path": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Privacy",
-                        "name": "TailoredExperiencesWithDiagnosticDataEnabled",
-                        "type": "REG_DWORD",
-                        "value_on": 0,
-                        "value_off": 1,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": False,
-                "risk": "safe",
-            },
-            {
-                "id": "disable_clipboard_history",
-                "name": "Disable Clipboard History",
-                "description": "Prevent clipboard content from being saved across sessions",
-                "registry": [
-                    {
-                        "path": r"HKLM\SOFTWARE\Policies\Microsoft\Windows\System",
-                        "name": "AllowClipboardHistory",
-                        "type": "REG_DWORD",
-                        "value_on": 0,
-                        "value_off": 1,
-                    },
-                ],
-                "recommended": "off",
-                "requires_admin": True,
-                "risk": "safe",
-            },
-            {
                 "id": "disable_online_speech",
                 "name": "Disable Online Speech Recognition",
                 "description": "Prevent sending voice data to Microsoft for online speech recognition",
@@ -384,37 +234,6 @@ TWEAK_CATEGORIES = {
                         "type": "REG_DWORD",
                         "value_on": 0,
                         "value_off": 1,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": False,
-                "risk": "safe",
-            },
-            {
-                "id": "disable_input_personalization",
-                "name": "Disable Input Personalization",
-                "description": "Stop Windows from learning your typing and inking patterns",
-                "registry": [
-                    {
-                        "path": r"HKCU\SOFTWARE\Microsoft\Input\TIPC",
-                        "name": "Enabled",
-                        "type": "REG_DWORD",
-                        "value_on": 0,
-                        "value_off": 1,
-                    },
-                    {
-                        "path": r"HKCU\SOFTWARE\Microsoft\InputPersonalization",
-                        "name": "RestrictImplicitInkCollection",
-                        "type": "REG_DWORD",
-                        "value_on": 1,
-                        "value_off": 0,
-                    },
-                    {
-                        "path": r"HKCU\SOFTWARE\Microsoft\InputPersonalization",
-                        "name": "RestrictImplicitTextCollection",
-                        "type": "REG_DWORD",
-                        "value_on": 1,
-                        "value_off": 0,
                     },
                 ],
                 "recommended": "on",
@@ -439,23 +258,6 @@ TWEAK_CATEGORIES = {
                 "risk": "safe",
             },
             {
-                "id": "disable_consumer_features",
-                "name": "Disable Consumer Features",
-                "description": "Remove Microsoft Store app suggestions and consumer experiences",
-                "registry": [
-                    {
-                        "path": r"HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent",
-                        "name": "DisableWindowsConsumerFeatures",
-                        "type": "REG_DWORD",
-                        "value_on": 1,
-                        "value_off": 0,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": True,
-                "risk": "safe",
-            },
-            {
                 "id": "disable_wpbt",
                 "name": "Disable Windows Platform Binary Table",
                 "description": "Prevent OEM boot-time code from executing (security & privacy risk)",
@@ -466,23 +268,6 @@ TWEAK_CATEGORIES = {
                         "type": "REG_DWORD",
                         "value_on": 1,
                         "value_off": 0,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": True,
-                "risk": "safe",
-            },
-            {
-                "id": "disable_delivery_optimization",
-                "name": "Disable Delivery Optimization",
-                "description": "Stop Windows from using your bandwidth to share updates with other PCs",
-                "registry": [
-                    {
-                        "path": r"HKLM\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization",
-                        "name": "DODownloadMode",
-                        "type": "REG_DWORD",
-                        "value_on": 0,
-                        "value_off": 3,
                     },
                 ],
                 "recommended": "on",
@@ -610,27 +395,6 @@ TWEAK_CATEGORIES = {
                 "warning": "File search in Explorer will be significantly slower without indexing.",
             },
             {
-                "id": "disable_sysmain",
-                "name": "Disable SysMain (Superfetch)",
-                "description": "Disable SysMain to reduce disk and CPU usage, especially on HDDs",
-                "services": {
-                    "on": [
-                        {"name": "SysMain", "startup_type": "Disabled"},
-                    ],
-                    "off": [
-                        {"name": "SysMain", "startup_type": "Automatic"},
-                    ],
-                },
-                "commands": {
-                    "on": ["Stop-Service -Name SysMain -Force -ErrorAction SilentlyContinue"],
-                    "off": ["Start-Service -Name SysMain -ErrorAction SilentlyContinue"],
-                },
-                "recommended": "on",
-                "requires_admin": True,
-                "risk": "moderate",
-                "warning": "Can slow down app launches on HDDs. Generally fine to disable on SSDs.",
-            },
-            {
                 "id": "disable_storage_sense",
                 "name": "Disable Storage Sense",
                 "description": "Prevent automatic disk cleanup that may delete files unexpectedly",
@@ -707,19 +471,6 @@ TWEAK_CATEGORIES = {
                 "warning": "⚠️ NOT FOR LAPTOPS. Increases power consumption, CPU boosting, and heat. Almost no benefit outside sustained rendering workloads.",
             },
             {
-                "id": "disk_cleanup",
-                "name": "Run Disk Cleanup",
-                "description": "Run Windows Disk Cleanup utility to free up disk space",
-                "commands": {
-                    "on": ["cleanmgr /sagerun:1"],
-                    "off": [],
-                },
-                "recommended": "off",
-                "requires_admin": True,
-                "script_only": True,
-                "risk": "safe",
-            },
-            {
                 "id": "disable_fullscreen_opt",
                 "name": "Disable Fullscreen Optimizations",
                 "description": "Improve game performance by disabling FSO for borderless windowed mode",
@@ -761,64 +512,6 @@ TWEAK_CATEGORIES = {
                     ],
                     "off": [],
                 },
-                "recommended": "on",
-                "requires_admin": True,
-                "risk": "safe",
-            },
-            {
-                "id": "disable_smb1",
-                "name": "Disable SMBv1 Protocol",
-                "description": "Disable the legacy SMBv1 protocol (security risk, used by WannaCry)",
-                "registry": [
-                    {
-                        "path": r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters",
-                        "name": "SMB1",
-                        "type": "REG_DWORD",
-                        "value_on": 0,
-                        "value_off": 1,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": True,
-                "risk": "safe",
-            },
-            {
-                "id": "disable_autorun",
-                "name": "Disable AutoRun",
-                "description": "Prevent automatic execution when inserting USB drives or CDs",
-                "registry": [
-                    {
-                        "path": r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer",
-                        "name": "NoAutoplay",
-                        "type": "REG_DWORD",
-                        "value_on": 1,
-                        "value_off": 0,
-                    },
-                    {
-                        "path": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers",
-                        "name": "DisableAutoplay",
-                        "type": "REG_DWORD",
-                        "value_on": 1,
-                        "value_off": 0,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": True,
-                "risk": "safe",
-            },
-            {
-                "id": "disable_rdp",
-                "name": "Disable Remote Desktop",
-                "description": "Disable Remote Desktop Protocol for improved security",
-                "registry": [
-                    {
-                        "path": r"HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server",
-                        "name": "fDenyTSConnections",
-                        "type": "REG_DWORD",
-                        "value_on": 1,
-                        "value_off": 0,
-                    },
-                ],
                 "recommended": "on",
                 "requires_admin": True,
                 "risk": "safe",
@@ -913,21 +606,6 @@ TWEAK_CATEGORIES = {
                 "risk": "moderate",
                 "warning": "Disables authenticode checking, which could allow unsigned code to run without warning.",
             },
-            {
-                "id": "create_restore_point",
-                "name": "Create Restore Point",
-                "description": "Create a system restore point before making changes (runs as script only)",
-                "commands": {
-                    "on": [
-                        "Checkpoint-Computer -Description 'WinTools Pre-Tweak Restore Point' -RestorePointType MODIFY_SETTINGS",
-                    ],
-                    "off": [],
-                },
-                "recommended": "on",
-                "requires_admin": True,
-                "script_only": True,
-                "risk": "safe",
-            },
         ],
     },
     "Hardening": {
@@ -935,23 +613,6 @@ TWEAK_CATEGORIES = {
         "description": "Advanced security hardening from Windows Hardening Script",
         "tweaks": [
             # ── SAFE ──────────────────────────────────────────────────
-            {
-                "id": "disable_background_apps",
-                "name": "Disable Background Apps",
-                "description": "Prevent UWP apps from running in the background",
-                "registry": [
-                    {
-                        "path": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications",
-                        "name": "GlobalUserDisabled",
-                        "type": "REG_DWORD",
-                        "value_on": 1,
-                        "value_off": 0,
-                    },
-                ],
-                "recommended": "on",
-                "requires_admin": False,
-                "risk": "safe",
-            },
             {
                 "id": "enable_smart_screen",
                 "name": "Enable SmartScreen",
@@ -993,7 +654,7 @@ TWEAK_CATEGORIES = {
                 "registry": [
                     {
                         "path": r"HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient",
-                        "name": "EnableMulticast",
+                        "name": "EnableLLMNR",
                         "type": "REG_DWORD",
                         "value_on": 0,
                         "value_off": 1,
@@ -1641,20 +1302,6 @@ TWEAK_CATEGORIES = {
                 "warning": "Some very old .NET applications may fail to connect.",
             },
             {
-                "id": "disable_windows_search_web",
-                "name": "Disable Web Search in Search Bar",
-                "description": "Disable Bing search, Cortana, and location in Windows Search",
-                "registry": [
-                    {"path": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Search", "name": "BingSearchEnabled", "type": "REG_DWORD", "value_on": 0, "value_off": 1},
-                    {"path": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Search", "name": "AllowSearchToUseLocation", "type": "REG_DWORD", "value_on": 0, "value_off": 1},
-                    {"path": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Search", "name": "CortanaConsent", "type": "REG_DWORD", "value_on": 0, "value_off": 1},
-                ],
-                "recommended": "on",
-                "requires_admin": False,
-                "risk": "moderate",
-                "warning": "You will no longer see web results in Windows Search.",
-            },
-            {
                 "id": "disable_wifi_sense",
                 "name": "Disable Wi-Fi Sense",
                 "description": "Prevent Windows from sharing Wi-Fi passwords with contacts",
@@ -1804,11 +1451,10 @@ TWEAK_CATEGORIES = {
             {
                 "id": "edge_hardening",
                 "name": "Harden Microsoft Edge",
-                "description": "Force SmartScreen, block background mode, enforce TLS 1.2 minimum, force uBlock Origin",
+                "description": "Block background mode, enforce site isolation, prevent SmartScreen override, enforce TLS errors, force PUA protection, block history deletion",
                 "registry": [
                     {"path": r"HKLM\Software\Policies\Microsoft\Edge", "name": "BackgroundModeEnabled", "type": "REG_DWORD", "value_on": 0, "value_off": 1},
                     {"path": r"HKLM\Software\Policies\Microsoft\Edge", "name": "SitePerProcess", "type": "REG_DWORD", "value_on": 1, "value_off": 0},
-                    {"path": r"HKLM\Software\Policies\Microsoft\Edge", "name": "SmartScreenEnabled", "type": "REG_DWORD", "value_on": 1, "value_off": 0},
                     {"path": r"HKLM\Software\Policies\Microsoft\Edge", "name": "PreventSmartScreenPromptOverride", "type": "REG_DWORD", "value_on": 1, "value_off": 0},
                     {"path": r"HKLM\Software\Policies\Microsoft\Edge", "name": "PreventSmartScreenPromptOverrideForFiles", "type": "REG_DWORD", "value_on": 1, "value_off": 0},
                     {"path": r"HKLM\Software\Policies\Microsoft\Edge", "name": "SSLErrorOverrideAllowed", "type": "REG_DWORD", "value_on": 0, "value_off": 1},
