@@ -4,6 +4,7 @@ A one-click desktop application for managing, tweaking, and hardening your Windo
 Similar to Chris Titus WinUtil - runs as a native window on your desktop.
 """
 
+import ctypes
 import json
 import subprocess
 import threading
@@ -34,6 +35,7 @@ SCAN_WINOPTIONS_SCRIPT = BASE_DIR / "scan-winoptions.ps1"
 SCAN_PRIVACY_SCRIPT = BASE_DIR / "scan-privacy.ps1"
 SCAN_PRIVACY_APPS_SCRIPT = BASE_DIR / "scan-privacy-apps.ps1"
 SCAN_QUICKSETUP_SCRIPT = BASE_DIR / "scan-quicksetup.ps1"
+SCAN_ENVVARS_SCRIPT = BASE_DIR / "scan-envvars.ps1"
 APPS_JSON = DATA_DIR / "installed-apps.json"
 ALLOWLISTS_JSON = DATA_DIR / "allowlists.json"
 
@@ -52,6 +54,10 @@ _privacy_states_time = 0
 # Cached quick setup states (refreshed on scan)
 _quicksetup_states_cache = {}
 _quicksetup_states_time = 0
+
+# Cached env vars states (refreshed on scan)
+_envvars_cache = {}
+_envvars_cache_time = 0
 
 app = Flask(
     __name__,
@@ -1380,6 +1386,253 @@ def api_quicksetup_apply():
         "failed": fail_count,
         "action": action,
     })
+
+
+# ── Environment Variables & PATH ──────────────────────────────────────────
+
+def scan_envvars():
+    """Run scan-envvars.ps1 and return current environment variables and PATH entries."""
+    global _envvars_cache, _envvars_cache_time
+    if _envvars_cache and (time.time() - _envvars_cache_time) < 10:
+        return _envvars_cache
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCAN_ENVVARS_SCRIPT)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout.strip())
+            _envvars_cache = data
+            _envvars_cache_time = time.time()
+            return data
+    except Exception as e:
+        print(f"[ERROR] scan_envvars: {e}")
+
+    return {}
+
+
+def _broadcast_setting_change():
+    """Broadcast WM_SETTINGCHANGE so other apps see env var changes."""
+    broadcast_cmd = (
+        'Add-Type -TypeDefinition "using System;using System.Runtime.InteropServices;'
+        "public class Win32Env{"
+        "[DllImport('user32.dll',SetLastError=true,CharSet=CharSet.Auto)]"
+        "public static extern IntPtr SendMessageTimeout(IntPtr hWnd,uint Msg,UIntPtr wParam,string lParam,uint fuFlags,uint uTimeout,out IntPtr lpdwResult);"
+        '}" -PassThru | Out-Null;'
+        '$r=[IntPtr]::Zero;'
+        '[Win32Env]::SendMessageTimeout([IntPtr]0xffff,0x1a,[UIntPtr]::Zero,"Environment",0x2,5000,[ref]$r)'
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", broadcast_cmd],
+            capture_output=True, text=True, timeout=15,
+        )
+    except Exception:
+        pass
+
+
+# Critical system variables that should not be deleted
+_PROTECTED_SYSTEM_VARS = {
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "OS",
+    "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL",
+    "PROCESSOR_REVISION", "NUMBER_OF_PROCESSORS", "COMPUTERNAME",
+    "USERNAME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+    "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432",
+    "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432",
+    "PATH", "PATHEXT", "TEMP", "TMP",
+}
+
+
+@app.route("/api/envvars")
+def api_envvars():
+    """Return all environment variables and PATH entries."""
+    data = scan_envvars()
+    if not data:
+        return jsonify({"error": "Scan failed"}), 500
+    return jsonify(data)
+
+
+@app.route("/api/envvars/edit", methods=["POST"])
+def api_envvars_edit():
+    """Set or delete an environment variable. Body: {"name", "value", "scope", "action": "set"|"delete"}"""
+    data = request.json or {}
+    name = data.get("name", "").strip()
+    scope = data.get("scope", "user")
+    action = data.get("action", "set")
+    value = data.get("value", "")
+
+    if not name:
+        return jsonify({"success": False, "error": "Variable name is required"}), 400
+
+    # Validate name — no newlines, null chars, or equals signs
+    if any(c in name for c in ["\n", "\r", "\0", "="]):
+        return jsonify({"success": False, "error": "Invalid variable name"}), 400
+
+    # Protect critical system variables from deletion
+    if action == "delete" and name.upper() in _PROTECTED_SYSTEM_VARS and scope == "system":
+        return jsonify({"success": False, "error": f"Cannot delete critical system variable '{name}'"}), 400
+
+    # Check admin for system scope
+    if scope == "system":
+        try:
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            is_admin = False
+        if not is_admin:
+            return jsonify({"success": False, "error": "System variables require administrator privileges"}), 403
+
+    scope_target = "Machine" if scope == "system" else "User"
+
+    # Sanitize name to prevent command injection
+    safe_name = _sanitize_reg_value(name)
+
+    # Registry path for the scope
+    reg_path = r"HKCU:\Environment" if scope == "user" else r"HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+
+    if action == "delete":
+        # For delete, [Environment]::SetEnvironmentVariable is safe (type doesn't matter)
+        ps_cmd = f"[Environment]::SetEnvironmentVariable('{safe_name}', $null, '{scope_target}')"
+    else:
+        # [Environment]::SetEnvironmentVariable() always writes REG_SZ, which
+        # destroys %Variable% references (like %SystemRoot% in PATH).
+        # Use Set-ItemProperty to preserve REG_EXPAND_SZ type.
+        # For long values, use a temp file to avoid command-line length limits.
+        safe_value = value.replace("'", "''").replace('"', '`"')
+
+        if len(value) > 3000:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+                f.write(value)
+                tmp_path = f.name
+            ps_cmd = (
+                f"$regPath = '{reg_path}';"
+                f"$val = Get-Content -Path '{tmp_path}' -Raw;"
+                f"$kind = try {{ (Get-Item -LiteralPath $regPath -ErrorAction Stop).GetValueKind('{safe_name}') }} catch {{ 'String' }};"
+                f"if ($kind -eq 'ExpandString') {{ Set-ItemProperty -LiteralPath $regPath -Name '{safe_name}' -Value $val -Type ExpandString -Force }}"
+                f"else {{ Set-ItemProperty -LiteralPath $regPath -Name '{safe_name}' -Value $val -Type String -Force }};"
+                f"Remove-Item '{tmp_path}' -ErrorAction SilentlyContinue"
+            )
+        else:
+            ps_cmd = (
+                f"$regPath = '{reg_path}';"
+                f"$kind = try {{ (Get-Item -LiteralPath $regPath -ErrorAction Stop).GetValueKind('{safe_name}') }} catch {{ 'String' }};"
+                f"if ($kind -eq 'ExpandString') {{ Set-ItemProperty -LiteralPath $regPath -Name '{safe_name}' -Value '{safe_value}' -Type ExpandString -Force }}"
+                f"else {{ Set-ItemProperty -LiteralPath $regPath -Name '{safe_name}' -Value '{safe_value}' -Type String -Force }}"
+            )
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            _broadcast_setting_change()
+            global _envvars_cache, _envvars_cache_time
+            _envvars_cache = {}
+            _envvars_cache_time = 0
+            msg = f"Variable {'deleted' if action == 'delete' else 'set'}: {name}"
+            return jsonify({"success": True, "message": msg})
+        else:
+            error = result.stderr.strip()[:300] if result.stderr else "Unknown error"
+            return jsonify({"success": False, "error": error}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)[:200]}), 500
+
+
+@app.route("/api/envvars/path", methods=["POST"])
+def api_envvars_path():
+    """Add, remove, or reorder PATH entries. Body: {"action": "add"|"remove"|"reorder", "scope", "path", "paths"}"""
+    global _envvars_cache, _envvars_cache_time
+
+    data = request.json or {}
+    action = data.get("action", "")
+    scope = data.get("scope", "user")
+    path_entry = data.get("path", "")
+    paths = data.get("paths", [])
+
+    # Check admin for system scope
+    if scope == "system":
+        try:
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            is_admin = False
+        if not is_admin:
+            return jsonify({"success": False, "error": "System PATH requires administrator privileges"}), 403
+
+    scope_target = "Machine" if scope == "system" else "User"
+
+    # Read current PATH
+    read_cmd = f"[Environment]::GetEnvironmentVariable('PATH', '{scope_target}')"
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", read_cmd],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return jsonify({"success": False, "error": "Failed to read current PATH"}), 500
+        current_path = result.stdout.strip()
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)[:200]}), 500
+
+    # Parse current entries
+    entries = [e.strip() for e in current_path.split(";") if e.strip()] if current_path else []
+
+    if action == "add":
+        # Don't add duplicates (case-insensitive)
+        normalized = path_entry.rstrip("\\").lower()
+        if any(e.rstrip("\\").lower() == normalized for e in entries):
+            return jsonify({"success": False, "error": "Path entry already exists"}), 409
+        entries.append(path_entry)
+
+    elif action == "remove":
+        normalized = path_entry.rstrip("\\").lower()
+        entries = [e for e in entries if e.rstrip("\\").lower() != normalized]
+
+    elif action == "reorder":
+        # Validate: supplied paths must be a permutation of current entries
+        if paths:
+            normalized_current = sorted(e.rstrip("\\").lower() for e in entries)
+            normalized_new = sorted(p.strip().rstrip("\\").lower() for p in paths if p.strip())
+            if normalized_current != normalized_new:
+                return jsonify({"success": False, "error": "PATH has changed since last scan. Please rescan and try again."}), 409
+            entries = [p for p in paths if p.strip()]
+    else:
+        return jsonify({"success": False, "error": f"Unknown action: {action}"}), 400
+
+    # Rebuild PATH string and set it (preserve REG_EXPAND_SZ type)
+    new_path = ";".join(entries)
+
+    # Use Set-ItemProperty to preserve REG_EXPAND_SZ (PATH is always REG_EXPAND_SZ)
+    reg_path = r"HKCU:\Environment" if scope == "user" else r"HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+
+    # Use temp file for PATH values (can be very long)
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write(new_path)
+        tmp_path = f.name
+
+    ps_cmd = (
+        f"$val = Get-Content -Path '{tmp_path}' -Raw;"
+        f"Set-ItemProperty -LiteralPath '{reg_path}' -Name 'Path' -Value $val -Type ExpandString -Force;"
+        f"Remove-Item '{tmp_path}' -ErrorAction SilentlyContinue"
+    )
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            _broadcast_setting_change()
+            _envvars_cache = {}
+            _envvars_cache_time = 0
+            return jsonify({"success": True, "message": f"PATH {action}d", "entries": len(entries)})
+        else:
+            error = result.stderr.strip()[:300] if result.stderr else "Unknown error"
+            return jsonify({"success": False, "error": error}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)[:200]}), 500
 
 
 # ── Privacy & Security Flask Routes ──────────────────────────────────────

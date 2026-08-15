@@ -123,6 +123,13 @@ function switchTab(tabId) {
             loadQuickSetup();
         }
     }
+    if (tabId === "envvars") {
+        if (envvarsData) {
+            renderEnvVars(envvarsData, envvarsIsElevated);
+        } else {
+            loadEnvVars();
+        }
+    }
 }
 
 // ── Toast Notifications ─────────────────────────────────────────
@@ -2537,6 +2544,472 @@ let privacyData = null;
 let privacyIsElevated = false;
 let quicksetupData = null;
 let quicksetupIsElevated = false;
+
+// ── Environment Variables & PATH Editor ────────────────────────────
+let envvarsData = null;
+let envvarsIsElevated = false;
+
+async function loadEnvVars() {
+    const el = document.getElementById("envvars-content");
+    const resultEl = document.getElementById("envvars-result");
+    resultEl.textContent = "";
+    showLoading(el, "Scanning environment variables...");
+
+    try {
+        const res = await fetch(`${API}/envvars`);
+        const data = await res.json();
+        if (data.error) {
+            el.textContent = "";
+            el.appendChild(createElement("div", { className: "loading" }, [`Error: ${data.error}`]));
+            return;
+        }
+        envvarsData = data;
+        envvarsIsElevated = data._meta && data._meta.is_admin;
+        renderEnvVars(envvarsData, envvarsIsElevated);
+    } catch (err) {
+        el.textContent = "";
+        el.appendChild(createElement("div", { className: "loading" }, [`Error: ${err.message}`]));
+    }
+}
+
+function renderEnvVars(data, isElevated) {
+    const el = document.getElementById("envvars-content");
+    const pathSection = document.getElementById("path-editor-section");
+    const pathContent = document.getElementById("path-editor-content");
+    const pathStats = document.getElementById("path-stats");
+    el.textContent = "";
+
+    if (!isElevated) {
+        const banner = createElement("div", { className: "wo-banner" }, [
+            "⚠️ Not running as Administrator — System variables are read-only. Right-click WinSuite and select \"Run as Administrator\" to edit System variables."
+        ]);
+        el.appendChild(banner);
+    }
+
+    // Search/scope filter events
+    const searchInput = document.getElementById("env-search");
+    const scopeFilter = document.getElementById("env-scope-filter");
+    searchInput.oninput = () => filterEnvVars(searchInput.value, scopeFilter.value);
+    scopeFilter.onchange = () => filterEnvVars(searchInput.value, scopeFilter.value);
+
+    // Variables table
+    const variables = data.variables || [];
+    const varSection = createElement("div", { className: "env-vars-section" });
+    const varHeader = createElement("div", { className: "env-section-header" }, [
+        createElement("h2", {}, [`Environment Variables`]),
+        createElement("span", { className: "env-var-count" }, [
+            `${data._meta?.user_count || 0} User, ${data._meta?.system_count || 0} System`
+        ])
+    ]);
+    varSection.appendChild(varHeader);
+
+    const varTable = createElement("div", { className: "env-var-table", id: "env-var-table" });
+    variables.forEach(v => {
+        varTable.appendChild(createEnvVarRow(v, isElevated));
+    });
+    varSection.appendChild(varTable);
+    el.appendChild(varSection);
+
+    // PATH Editor section
+    const pathEntries = data.path_entries || [];
+    if (pathEntries.length > 0) {
+        pathSection.style.display = "";
+        pathStats.textContent = `${data._meta?.path_total || 0} entries, ${data._meta?.path_duplicates || 0} duplicates`;
+        pathContent.textContent = "";
+        pathEntries.forEach(entry => {
+            const scopeEntries = entry.scope === "system"
+                ? pathEntries.filter(e => e.scope === "system")
+                : pathEntries.filter(e => e.scope === "user");
+            const scopeIdx = entry.scope === "system"
+                ? pathEntries.filter(e => e.scope === "system").indexOf(entry)
+                : pathEntries.filter(e => e.scope === "user").indexOf(entry);
+            pathContent.appendChild(createPathEntry(entry, scopeIdx, scopeEntries.length, isElevated));
+        });
+        // Reapply scope filter after rendering
+        filterPathEntries();
+    } else {
+        // Hide PATH section if no entries
+        pathSection.style.display = "none";
+        pathContent.textContent = "";
+    }
+}
+
+function createEnvVarRow(v, isElevated) {
+    const row = createElement("div", {
+        className: "env-var-row",
+        "data-var-name": v.name,
+        "data-var-scope": v.scope,
+        "data-var-value": (v.value || ""),  // Full value for search
+    });
+
+    const nameSpan = createElement("span", { className: "env-var-name" }, [v.name]);
+
+    // Show expanded value if different from raw (REG_EXPAND_SZ)
+    let displayValue = v.value || "";
+    if (v.expanded && v.expanded !== v.value && v.value) {
+        // Show raw value with tooltip for expanded
+        displayValue = v.value;
+    }
+    const valueSpan = createElement("span", {
+        className: "env-var-value",
+        title: v.expanded && v.expanded !== v.value ? `Expanded: ${v.expanded}` : "",
+    }, [displayValue.length > 80 ? displayValue.substring(0, 80) + "..." : displayValue]);
+
+    const typeBadge = v.type === "REG_EXPAND_SZ"
+        ? createElement("span", { className: "env-var-type", title: "Contains %VARIABLE% references" }, ["EXP"])
+        : null;
+
+    const scopeBadge = createElement("span", {
+        className: `env-scope-badge scope-${v.scope}`
+    }, [v.scope === "user" ? "User" : "System"]);
+
+    const actions = createElement("div", { className: "env-var-actions" });
+    const editBtn = createElement("button", {
+        className: "btn btn-sm",
+        title: "Edit value",
+    }, ["✏️"]);
+    editBtn.onclick = () => startEditEnvVar(v.name, v.value, v.scope, isElevated);
+    actions.appendChild(editBtn);
+
+    if (v.scope === "user" || isElevated) {
+        const deleteBtn = createElement("button", {
+            className: "btn btn-sm",
+            title: "Delete variable",
+        }, ["🗑️"]);
+        deleteBtn.onclick = () => deleteEnvVar(v.name, v.scope, isElevated);
+        actions.appendChild(deleteBtn);
+    } else {
+        const lockSpan = createElement("span", { className: "env-scope-badge", title: "Requires admin to modify" }, ["🔒"]);
+        actions.appendChild(lockSpan);
+    }
+
+    row.append(nameSpan, valueSpan);
+    if (typeBadge) row.appendChild(typeBadge);
+    row.append(scopeBadge, actions);
+    return row;
+}
+
+function createPathEntry(entry, scopeIdx, scopeTotal, isElevated) {
+    const row = createElement("div", {
+        className: `path-entry-row ${entry.is_duplicate ? "path-duplicate" : ""} ${!entry.exists ? "path-missing" : ""}`,
+    });
+
+    const reorderDiv = createElement("div", { className: "path-reorder" });
+    const upBtn = createElement("button", {
+        title: "Move up",
+        disabled: scopeIdx === 0,
+    }, ["↑"]);
+    upBtn.onclick = () => movePathEntry(entry.scope, scopeIdx, -1);
+    const downBtn = createElement("button", {
+        title: "Move down",
+        disabled: scopeIdx >= scopeTotal - 1,
+    }, ["↓"]);
+    downBtn.onclick = () => movePathEntry(entry.scope, scopeIdx, 1);
+    reorderDiv.append(upBtn, downBtn);
+
+    const pathText = createElement("span", { className: "path-entry-text", title: entry.path }, [entry.path]);
+
+    const badges = createElement("span", { className: "path-entry-badges" });
+    badges.appendChild(createElement("span", {
+        className: `env-scope-badge scope-${entry.scope}`,
+    }, [entry.scope === "user" ? "User" : "System"]));
+
+    if (entry.is_duplicate) {
+        badges.appendChild(createElement("span", { className: "path-badge duplicate" }, ["Duplicate"]));
+    }
+    if (!entry.exists) {
+        badges.appendChild(createElement("span", { className: "path-badge missing" }, ["Missing"]));
+    } else {
+        badges.appendChild(createElement("span", { className: "path-badge exists" }, ["✓"]));
+    }
+
+    const deleteBtn = createElement("div", { className: "path-entry-actions" });
+    const delBtn = createElement("button", {
+        className: "btn btn-sm",
+        title: "Remove from PATH",
+    }, ["🗑️"]);
+    delBtn.onclick = () => removePathEntry(entry.path, entry.scope, isElevated);
+    deleteBtn.appendChild(delBtn);
+
+    row.append(reorderDiv, pathText, badges, deleteBtn);
+    return row;
+}
+
+function filterEnvVars(query, scope) {
+    const table = document.getElementById("env-var-table");
+    if (!table) return;
+    const q = query.toLowerCase();
+    const rows = table.querySelectorAll(".env-var-row");
+    rows.forEach(row => {
+        const name = row.dataset.varName?.toLowerCase() || "";
+        const scopeVal = row.dataset.varScope || "";
+        // Use data-var-value (full untruncated value) for search
+        const value = (row.dataset.varValue || "").toLowerCase();
+        const matchesQuery = !q || name.includes(q) || value.includes(q);
+        const matchesScope = scope === "all" || scopeVal === scope;
+        row.style.display = (matchesQuery && matchesScope) ? "" : "none";
+    });
+}
+
+async function startEditEnvVar(name, currentValue, scope, isElevated) {
+    if (scope === "system" && !isElevated) {
+        showToast("System variables require Administrator privileges", "error");
+        return;
+    }
+
+    // Create edit dialog
+    const overlay = createElement("div", { className: "env-dialog-overlay" });
+    const dialog = createElement("div", { className: "env-dialog" });
+    dialog.appendChild(createElement("h3", {}, [`Edit: ${name}`]));
+
+    const scopeLabel = scope === "user" ? "User" : "System";
+    dialog.appendChild(createElement("div", { style: "font-size:12px;color:var(--text-muted);margin-bottom:8px;" }, [
+        `Scope: ${scopeLabel} | Type: ${scope === "system" ? "System (requires admin)" : "User"}`
+    ]));
+
+    const label = createElement("label", {}, ["Value:"]);
+    const textarea = createElement("textarea", {
+        id: "env-edit-value",
+    }, [currentValue || ""]);
+    dialog.append(label, textarea);
+
+    const actions = createElement("div", { className: "env-dialog-actions" });
+    const cancelBtn = createElement("button", { className: "btn" }, ["Cancel"]);
+    cancelBtn.onclick = () => overlay.remove();
+    const saveBtn = createElement("button", { className: "btn btn-accent" }, ["Save"]);
+    saveBtn.onclick = async () => {
+        const newValue = textarea.value;
+        try {
+            const res = await fetch(`${API}/envvars/edit`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, value: newValue, scope, action: "set" }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(data.message, "success");
+                overlay.remove();
+                loadEnvVars();
+            } else {
+                showToast(`Error: ${data.error}`, "error");
+            }
+        } catch (err) {
+            showToast(`Error: ${err.message}`, "error");
+        }
+    };
+    actions.append(cancelBtn, saveBtn);
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    textarea.focus();
+}
+
+async function deleteEnvVar(name, scope, isElevated) {
+    if (scope === "system" && !isElevated) {
+        showToast("System variables require Administrator privileges", "error");
+        return;
+    }
+
+    if (!confirm(`Delete environment variable "${name}"?\n\nThis will permanently remove it from ${scope === "user" ? "User" : "System"} environment variables.`)) {
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API}/envvars/edit`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, scope, action: "delete" }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast(data.message, "success");
+            loadEnvVars();
+        } else {
+            showToast(`Error: ${data.error}`, "error");
+        }
+    } catch (err) {
+        showToast(`Error: ${err.message}`, "error");
+    }
+}
+
+function showAddEnvVarDialog() {
+    const overlay = createElement("div", { className: "env-dialog-overlay" });
+    const dialog = createElement("div", { className: "env-dialog" });
+    dialog.appendChild(createElement("h3", {}, ["Add Environment Variable"]));
+
+    dialog.appendChild(createElement("label", {}, ["Name:"]));
+    const nameInput = createElement("input", { type: "text", id: "env-add-name", placeholder: "MY_VARIABLE" });
+
+    dialog.appendChild(createElement("label", {}, ["Value:"]));
+    const valueInput = createElement("textarea", { id: "env-add-value", placeholder: "Variable value..." });
+
+    dialog.appendChild(createElement("label", {}, ["Scope:"]));
+    const scopeSelect = createElement("select", { id: "env-add-scope" }, [
+        createElement("option", { value: "user" }, ["User (recommended)"]),
+        createElement("option", { value: "system" }, ["System (requires admin)"]),
+    ]);
+
+    dialog.append(nameInput, valueInput, scopeSelect);
+
+    const actions = createElement("div", { className: "env-dialog-actions" });
+    const cancelBtn = createElement("button", { className: "btn" }, ["Cancel"]);
+    cancelBtn.onclick = () => overlay.remove();
+    const addBtn = createElement("button", { className: "btn btn-accent" }, ["Add"]);
+    addBtn.onclick = async () => {
+        const name = nameInput.value.trim();
+        const value = valueInput.value;
+        const scope = scopeSelect.value;
+        if (!name) { showToast("Variable name is required", "error"); return; }
+        try {
+            const res = await fetch(`${API}/envvars/edit`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, value, scope, action: "set" }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(data.message, "success");
+                overlay.remove();
+                loadEnvVars();
+            } else {
+                showToast(`Error: ${data.error}`, "error");
+            }
+        } catch (err) {
+            showToast(`Error: ${err.message}`, "error");
+        }
+    };
+    actions.append(cancelBtn, addBtn);
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    nameInput.focus();
+}
+
+function showAddPathEntryDialog() {
+    const overlay = createElement("div", { className: "env-dialog-overlay" });
+    const dialog = createElement("div", { className: "env-dialog" });
+    dialog.appendChild(createElement("h3", {}, ["Add PATH Entry"]));
+
+    dialog.appendChild(createElement("label", {}, ["Directory path:"]));
+    const pathInput = createElement("input", {
+        type: "text",
+        id: "path-add-value",
+        placeholder: "C:\\Users\\user\\bin",
+    });
+
+    dialog.appendChild(createElement("label", {}, ["Add to:"]));
+    const scopeSelect = createElement("select", { id: "path-add-scope" }, [
+        createElement("option", { value: "user" }, ["User PATH (recommended)"]),
+        createElement("option", { value: "system" }, ["System PATH (requires admin)"]),
+    ]);
+
+    dialog.append(pathInput, scopeSelect);
+
+    const actions = createElement("div", { className: "env-dialog-actions" });
+    const cancelBtn = createElement("button", { className: "btn" }, ["Cancel"]);
+    cancelBtn.onclick = () => overlay.remove();
+    const addBtn = createElement("button", { className: "btn btn-accent" }, ["Add"]);
+    addBtn.onclick = async () => {
+        const path = pathInput.value.trim();
+        const scope = scopeSelect.value;
+        if (!path) { showToast("Path is required", "error"); return; }
+        try {
+            const res = await fetch(`${API}/envvars/path`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "add", scope, path }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(data.message, "success");
+                overlay.remove();
+                loadEnvVars();
+            } else {
+                showToast(`Error: ${data.error}`, "error");
+            }
+        } catch (err) {
+            showToast(`Error: ${err.message}`, "error");
+        }
+    };
+    actions.append(cancelBtn, addBtn);
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    pathInput.focus();
+}
+
+async function removePathEntry(path, scope, isElevated) {
+    if (scope === "system" && !isElevated) {
+        showToast("System PATH requires Administrator privileges", "error");
+        return;
+    }
+
+    if (!confirm(`Remove "${path}" from ${scope === "user" ? "User" : "System"} PATH?`)) return;
+
+    try {
+        const res = await fetch(`${API}/envvars/path`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "remove", scope, path }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast(data.message, "success");
+            loadEnvVars();
+        } else {
+            showToast(`Error: ${data.error}`, "error");
+        }
+    } catch (err) {
+        showToast(`Error: ${err.message}`, "error");
+    }
+}
+
+async function movePathEntry(scope, index, direction) {
+    // Get current path entries for this scope
+    if (!envvarsData) return;
+    const scopeEntries = envvarsData.path_entries
+        .filter(e => e.scope === scope)
+        .map(e => e.path);
+    const newIdx = index + direction;
+    if (newIdx < 0 || newIdx >= scopeEntries.length) return;
+
+    // Swap
+    [scopeEntries[index], scopeEntries[newIdx]] = [scopeEntries[newIdx], scopeEntries[index]];
+
+    try {
+        const res = await fetch(`${API}/envvars/path`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "reorder", scope, paths: scopeEntries }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast("PATH reordered", "success");
+            loadEnvVars();
+        } else {
+            showToast(`Error: ${data.error}`, "error");
+        }
+    } catch (err) {
+        showToast(`Error: ${err.message}`, "error");
+    }
+}
+
+function filterPathEntries() {
+    const scopeFilter = document.getElementById("path-scope-filter")?.value || "all";
+    const content = document.getElementById("path-editor-content");
+    if (!content) return;
+    const rows = content.querySelectorAll(".path-entry-row");
+    rows.forEach(row => {
+        // Each row has a scope badge with class scope-user or scope-system
+        const scopeBadge = row.querySelector(".env-scope-badge");
+        if (!scopeBadge) return;
+        const rowScope = scopeBadge.classList.contains("scope-user") ? "user" : "system";
+        row.style.display = (scopeFilter === "all" || rowScope === scopeFilter) ? "" : "none";
+    });
+}
 
 async function loadPrivacy() {
     const el = document.getElementById("privacy-content");

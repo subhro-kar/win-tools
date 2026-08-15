@@ -2622,3 +2622,379 @@ body {
         padding: 8px;
     }
 }
+
+/* ── Environment Variables & PATH Editor ──────────────────────────── */
+
+.env-toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.env-search-input {
+    flex: 1;
+    min-width: 200px;
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.env-search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.env-scope-filter {
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.env-scope-filter:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.envvars-content {
+    margin-bottom: 24px;
+}
+
+.env-var-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s ease;
+}
+
+.env-var-row:hover {
+    background: var(--bg-hover);
+}
+
+.env-var-name {
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    min-width: 160px;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.env-var-value {
+    flex: 1;
+    min-width: 0;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.env-var-value:hover {
+    color: var(--text-primary);
+}
+
+.env-var-type {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+}
+
+.env-var-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.env-var-actions .btn {
+    font-size: 11px;
+    padding: 3px 8px;
+}
+
+.env-scope-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.env-scope-badge.scope-user {
+    background: var(--green-bg);
+    color: var(--green);
+    border: 1px solid var(--green);
+}
+
+.env-scope-badge.scope-system {
+    background: var(--orange-bg);
+    color: var(--orange);
+    border: 1px solid var(--orange);
+}
+
+.env-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 24px 0 12px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.env-section-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.path-editor-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.path-stats {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+}
+
+.path-entry-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s ease;
+}
+
+.path-entry-row:hover {
+    background: var(--bg-hover);
+}
+
+.path-entry-row.path-duplicate {
+    background: rgba(210, 153, 34, 0.06);
+    border-left: 3px solid var(--orange);
+}
+
+.path-entry-row.path-missing .path-entry-text {
+    color: var(--red);
+    text-decoration: line-through;
+    opacity: 0.7;
+}
+
+.path-reorder {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.path-reorder button {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 1px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 10px;
+    line-height: 1;
+}
+
+.path-reorder button:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.path-reorder button:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.path-entry-text {
+    flex: 1;
+    min-width: 0;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.path-entry-badges {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.path-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+}
+
+.path-badge.duplicate {
+    background: rgba(210, 153, 34, 0.2);
+    color: var(--orange);
+    border: 1px solid var(--orange);
+}
+
+.path-badge.missing {
+    background: var(--red-bg);
+    color: var(--red);
+    border: 1px solid var(--red);
+}
+
+.path-badge.exists {
+    background: var(--green-bg);
+    color: var(--green);
+    border: 1px solid var(--green);
+}
+
+.path-entry-actions .btn {
+    font-size: 11px;
+    padding: 3px 8px;
+}
+
+.env-var-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-left: 8px;
+}
+
+.env-no-results {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+/* ── Env Var Edit Dialog ─────────────────────────────────────────── */
+
+.env-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.env-dialog {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    min-width: 450px;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.env-dialog h3 {
+    margin-bottom: 16px;
+    font-size: 16px;
+}
+
+.env-dialog label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    margin-top: 12px;
+}
+
+.env-dialog label:first-of-type {
+    margin-top: 0;
+}
+
+.env-dialog input,
+.env-dialog select,
+.env-dialog textarea {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.env-dialog textarea {
+    min-height: 80px;
+    resize: vertical;
+}
+
+.env-dialog input:focus,
+.env-dialog select:focus,
+.env-dialog textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.env-dialog-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 16px;
+}
+
+.env-edit-inline {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+}
+
+.env-edit-inline input {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 12px;
+}
+
+.env-edit-inline .btn {
+    font-size: 11px;
+    padding: 3px 8px;
+    white-space: nowrap;
+}
+
+.env-protected-note {
+    font-size: 11px;
+    color: var(--orange);
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
