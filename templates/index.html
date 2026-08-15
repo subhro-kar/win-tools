@@ -46,6 +46,10 @@
                     <span class="tab-icon">&#9889;</span>
                     <span class="tab-label">Quick Setup</span>
                 </li>
+                <li class="nav-tab" data-tab="envvars">
+                    <span class="tab-icon">&#128424;</span>
+                    <span class="tab-label">Env Vars</span>
+                </li>
                 <li class="nav-tab" data-tab="tweaks">
                     <span class="tab-icon">&#9881;</span>
                     <span class="tab-label">Tweaks</span>
@@ -312,6 +316,45 @@
                 <div id="quicksetup-result" class="wo-result-area"></div>
                 <div id="quicksetup-content" class="privacy-content">
                     <div class="loading">Scanning Quick Setup settings...</div>
+                </div>
+            </section>
+
+            <!-- Environment Variables & PATH Editor Tab -->
+            <section id="tab-envvars" class="tab-content">
+                <div class="tab-header">
+                    <h1>&#128424; Environment Variables</h1>
+                    <p class="tab-desc">View, edit, and manage environment variables. Edit PATH entries individually with duplicate detection.</p>
+                </div>
+                <div class="env-toolbar">
+                    <input type="text" id="env-search" placeholder="Search by name or value..." class="env-search-input">
+                    <select id="env-scope-filter" class="env-scope-filter">
+                        <option value="all">All Scopes</option>
+                        <option value="user">User Only</option>
+                        <option value="system">System Only</option>
+                    </select>
+                    <button class="btn btn-accent" id="btn-env-add" onclick="showAddEnvVarDialog()">+ Add Variable</button>
+                    <button class="btn" onclick="loadEnvVars()">&#8635; Rescan</button>
+                </div>
+                <div id="envvars-result" class="wo-result-area"></div>
+                <div id="envvars-content" class="envvars-content">
+                    <div class="loading">Scanning environment variables...</div>
+                </div>
+
+                <!-- PATH Editor Section -->
+                <div id="path-editor-section" class="path-editor-section" style="display:none;">
+                    <div class="env-section-header">
+                        <h2>PATH Editor</h2>
+                        <div class="path-editor-actions">
+                            <span id="path-stats" class="path-stats"></span>
+                            <button class="btn btn-sm btn-accent" onclick="showAddPathEntryDialog()">+ Add PATH Entry</button>
+                            <select id="path-scope-filter" class="env-scope-filter" onchange="filterPathEntries()">
+                                <option value="all">All Scopes</option>
+                                <option value="user">User PATH</option>
+                                <option value="system">System PATH</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="path-editor-content" class="path-editor-content"></div>
                 </div>
             </section>
 
