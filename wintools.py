@@ -4,6 +4,7 @@ A one-click desktop application for managing, tweaking, and hardening your Windo
 Similar to Chris Titus WinUtil - runs as a native window on your desktop.
 """
 
+import ctypes
 import json
 import subprocess
 import threading
@@ -1486,23 +1487,39 @@ def api_envvars_edit():
     # Sanitize name to prevent command injection
     safe_name = _sanitize_reg_value(name)
 
+    # Registry path for the scope
+    reg_path = r"HKCU:\Environment" if scope == "user" else r"HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+
     if action == "delete":
+        # For delete, [Environment]::SetEnvironmentVariable is safe (type doesn't matter)
         ps_cmd = f"[Environment]::SetEnvironmentVariable('{safe_name}', $null, '{scope_target}')"
     else:
-        # For long values, use a temp file to avoid command-line length limits
+        # [Environment]::SetEnvironmentVariable() always writes REG_SZ, which
+        # destroys %Variable% references (like %SystemRoot% in PATH).
+        # Use Set-ItemProperty to preserve REG_EXPAND_SZ type.
+        # For long values, use a temp file to avoid command-line length limits.
+        safe_value = value.replace("'", "''").replace('"', '`"')
+
         if len(value) > 3000:
             import tempfile
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
                 f.write(value)
                 tmp_path = f.name
             ps_cmd = (
+                f"$regPath = '{reg_path}';"
                 f"$val = Get-Content -Path '{tmp_path}' -Raw;"
-                f"[Environment]::SetEnvironmentVariable('{safe_name}', $val, '{scope_target}');"
+                f"$kind = try {{ (Get-Item -LiteralPath $regPath -ErrorAction Stop).GetValueKind('{safe_name}') }} catch {{ 'String' }};"
+                f"if ($kind -eq 'ExpandString') {{ Set-ItemProperty -LiteralPath $regPath -Name '{safe_name}' -Value $val -Type ExpandString -Force }}"
+                f"else {{ Set-ItemProperty -LiteralPath $regPath -Name '{safe_name}' -Value $val -Type String -Force }};"
                 f"Remove-Item '{tmp_path}' -ErrorAction SilentlyContinue"
             )
         else:
-            safe_value = value.replace("'", "''")
-            ps_cmd = f"[Environment]::SetEnvironmentVariable('{safe_name}', '{safe_value}', '{scope_target}')"
+            ps_cmd = (
+                f"$regPath = '{reg_path}';"
+                f"$kind = try {{ (Get-Item -LiteralPath $regPath -ErrorAction Stop).GetValueKind('{safe_name}') }} catch {{ 'String' }};"
+                f"if ($kind -eq 'ExpandString') {{ Set-ItemProperty -LiteralPath $regPath -Name '{safe_name}' -Value '{safe_value}' -Type ExpandString -Force }}"
+                f"else {{ Set-ItemProperty -LiteralPath $regPath -Name '{safe_name}' -Value '{safe_value}' -Type String -Force }}"
+            )
 
     try:
         result = subprocess.run(
@@ -1573,16 +1590,23 @@ def api_envvars_path():
         entries = [e for e in entries if e.rstrip("\\").lower() != normalized]
 
     elif action == "reorder":
-        # Use the provided order
+        # Validate: supplied paths must be a permutation of current entries
         if paths:
+            normalized_current = sorted(e.rstrip("\\").lower() for e in entries)
+            normalized_new = sorted(p.strip().rstrip("\\").lower() for p in paths if p.strip())
+            if normalized_current != normalized_new:
+                return jsonify({"success": False, "error": "PATH has changed since last scan. Please rescan and try again."}), 409
             entries = [p for p in paths if p.strip()]
     else:
         return jsonify({"success": False, "error": f"Unknown action: {action}"}), 400
 
-    # Rebuild PATH string and set it
+    # Rebuild PATH string and set it (preserve REG_EXPAND_SZ type)
     new_path = ";".join(entries)
 
-    # Use temp file for long PATH strings
+    # Use Set-ItemProperty to preserve REG_EXPAND_SZ (PATH is always REG_EXPAND_SZ)
+    reg_path = r"HKCU:\Environment" if scope == "user" else r"HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+
+    # Use temp file for PATH values (can be very long)
     import tempfile
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
         f.write(new_path)
@@ -1590,7 +1614,7 @@ def api_envvars_path():
 
     ps_cmd = (
         f"$val = Get-Content -Path '{tmp_path}' -Raw;"
-        f"[Environment]::SetEnvironmentVariable('PATH', $val, '{scope_target}');"
+        f"Set-ItemProperty -LiteralPath '{reg_path}' -Name 'Path' -Value $val -Type ExpandString -Force;"
         f"Remove-Item '{tmp_path}' -ErrorAction SilentlyContinue"
     )
 

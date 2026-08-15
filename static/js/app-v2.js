@@ -2616,8 +2616,6 @@ function renderEnvVars(data, isElevated) {
         pathSection.style.display = "";
         pathStats.textContent = `${data._meta?.path_total || 0} entries, ${data._meta?.path_duplicates || 0} duplicates`;
         pathContent.textContent = "";
-        let pathIdx = 0;
-        let sysCount = 0, usrCount = 0;
         pathEntries.forEach(entry => {
             const scopeEntries = entry.scope === "system"
                 ? pathEntries.filter(e => e.scope === "system")
@@ -2627,6 +2625,12 @@ function renderEnvVars(data, isElevated) {
                 : pathEntries.filter(e => e.scope === "user").indexOf(entry);
             pathContent.appendChild(createPathEntry(entry, scopeIdx, scopeEntries.length, isElevated));
         });
+        // Reapply scope filter after rendering
+        filterPathEntries();
+    } else {
+        // Hide PATH section if no entries
+        pathSection.style.display = "none";
+        pathContent.textContent = "";
     }
 }
 
@@ -2635,6 +2639,7 @@ function createEnvVarRow(v, isElevated) {
         className: "env-var-row",
         "data-var-name": v.name,
         "data-var-scope": v.scope,
+        "data-var-value": (v.value || ""),  // Full value for search
     });
 
     const nameSpan = createElement("span", { className: "env-var-name" }, [v.name]);
@@ -2738,8 +2743,8 @@ function filterEnvVars(query, scope) {
     rows.forEach(row => {
         const name = row.dataset.varName?.toLowerCase() || "";
         const scopeVal = row.dataset.varScope || "";
-        const valueEl = row.querySelector(".env-var-value");
-        const value = valueEl?.textContent?.toLowerCase() || "";
+        // Use data-var-value (full untruncated value) for search
+        const value = (row.dataset.varValue || "").toLowerCase();
         const matchesQuery = !q || name.includes(q) || value.includes(q);
         const matchesScope = scope === "all" || scopeVal === scope;
         row.style.display = (matchesQuery && matchesScope) ? "" : "none";
